@@ -5,17 +5,11 @@
     "default": 9010,
     "hint": "用于访问浏览器可视化控制面板和 VNC 操作界面的端口号"
   },
-  "checkin_hour": {
-    "description": "每日签到时间（小时）",
-    "type": "int",
-    "default": 8,
-    "hint": "每日自动签到的触发时间（24小时制），默认早上8点"
-  },
-  "checkin_minute": {
-    "description": "每日签到时间（分钟）",
-    "type": "int",
-    "default": 30,
-    "hint": "每日自动签到的触发分钟数，默认30分"
+  "cron_rules": {
+    "description": "定时签到计划（Cron 表达式）",
+    "type": "text",
+    "default": "30 8 * * *",
+    "hint": "每行一条 Cron 表达式，格式: 分 时 日 月 周（如 30 8 * * * 表示每天8:30，0 9 * * 1-5 表示工作日9:00）。支持 */n 步进、逗号列表、范围"
   },
   "headless": {
     "description": "无头模式",
@@ -49,7 +43,8 @@
   },
   "vision_model_id": {
     "description": "识图使用的模型 ID",
-    "type": "str",
+    "type": "string",
+    "_special": "select_provider",
     "default": "",
     "hint": "用于识图验证的多模态大模型 ID（从 AstrBot 已配置的模型中选择），留空则使用当前默认模型"
   },

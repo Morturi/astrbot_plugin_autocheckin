@@ -367,6 +367,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">操作类型</label>
         <select id="addActionType" onchange="onAddActionTypeChange()" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">
           <option value="click">点击</option>
+          <option value="drag">拖动</option>
           <option value="type">输入文本</option>
           <option value="press_key">按键</option>
           <option value="navigate">导航</option>
@@ -432,7 +433,9 @@ function connectWebSocket() {
   ws = new WebSocket(`${protocol}//${location.host}/ws`);
   ws.binaryType = 'blob';
 
-  ws.onopen = () => addLog('WebSocket 已连接');
+  ws.onopen = () => {
+    addLog('WebSocket 已连接');
+  };
   ws.onclose = () => { addLog('WebSocket 断开，3秒后重连...'); setTimeout(connectWebSocket, 3000); };
   ws.onerror = () => {};
 
@@ -475,9 +478,53 @@ function setupCanvasEvents() {
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
   }
 
-  c.addEventListener('click', (e) => {
+  // 拖拽检测：mousedown -> mousemove -> mouseup
+  let dragState = null; // { startPos, moved }
+  const DRAG_THRESHOLD = 5; // 像素，超过此距离视为拖拽
+
+  c.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return; // 仅左键
     const pos = getPos(e);
-    sendWS({ action: 'click', x: pos.x, y: pos.y });
+    dragState = { startPos: pos, moved: false };
+  });
+
+  c.addEventListener('mousemove', (e) => {
+    if (!dragState) return;
+    const pos = getPos(e);
+    const dx = pos.x - dragState.startPos.x;
+    const dy = pos.y - dragState.startPos.y;
+    if (!dragState.moved && (dx*dx + dy*dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+      dragState.moved = true;
+      // 开始拖拽，发送 mousedown
+      sendWS({ action: 'mousedown', x: dragState.startPos.x, y: dragState.startPos.y });
+    }
+    if (dragState.moved) {
+      sendWS({ action: 'mousemove', x: pos.x, y: pos.y });
+    }
+  });
+
+  c.addEventListener('mouseup', (e) => {
+    if (!dragState) return;
+    const pos = getPos(e);
+    if (dragState.moved) {
+      // 拖拽结束
+      sendWS({ action: 'mouseup', x: pos.x, y: pos.y });
+      // 如果正在录制，发送完整 drag 操作
+      sendWS({ action: 'drag', fromX: dragState.startPos.x, fromY: dragState.startPos.y, toX: pos.x, toY: pos.y });
+    } else {
+      // 未超过阈值，视为普通点击
+      sendWS({ action: 'click', x: pos.x, y: pos.y });
+    }
+    dragState = null;
+  });
+
+  // 鼠标离开 canvas 时结束拖拽
+  c.addEventListener('mouseleave', (e) => {
+    if (dragState && dragState.moved) {
+      const pos = getPos(e);
+      sendWS({ action: 'mouseup', x: pos.x, y: pos.y });
+    }
+    dragState = null;
   });
 
   c.addEventListener('dblclick', (e) => {
@@ -693,7 +740,7 @@ function renderActionList() {
       '<button class="action-add-btn" onclick="showAddActionModal(-1)">+ 添加操作步骤</button>';
     return;
   }
-  const typeNames = { click: '点击', type: '输入', press_key: '按键', navigate: '导航', scroll: '滚动', wait: '等待' };
+  const typeNames = { click: '点击', type: '输入', press_key: '按键', navigate: '导航', scroll: '滚动', wait: '等待', drag: '拖动' };
   let html = recordedActions.map((a, i) => {
     let detail = getActionDetail(a);
     const isEditing = editingActionIndex === i;
@@ -731,6 +778,11 @@ function getActionDetail(a) {
   if (a.type === 'type') return `文本: "${a.text}"`;
   if (a.type === 'press_key') return `按键: ${a.key}`;
   if (a.type === 'navigate') return `URL: ${a.url}`;
+  if (a.type === 'drag') {
+    const toX = a.element_info?.toX ?? a.toX ?? 0;
+    const toY = a.element_info?.toY ?? a.toY ?? 0;
+    return `从 (${Math.round(a.x)}, ${Math.round(a.y)}) 拖到 (${Math.round(toX)}, ${Math.round(toY)})`;
+  }
   if (a.type === 'scroll') return `滚动量: ${a.delta_y}`;
   if (a.type === 'wait') return `等待: ${a.delay}s`;
   return '';
@@ -761,6 +813,18 @@ function buildEditForm(a, i) {
     fields = `<label>URL:</label><input type="text" id="aeUrl_${i}" value="${esc(a.url || '')}">`;
   } else if (a.type === 'scroll') {
     fields = `<label>滚动量 (正数=向下):</label><input type="number" id="aeDY_${i}" value="${a.delta_y}" step="50">`;
+  } else if (a.type === 'drag') {
+    const toX = a.element_info?.toX ?? a.toX ?? 0;
+    const toY = a.element_info?.toY ?? a.toY ?? 0;
+    fields = `
+      <div class="ae-row">
+        <label>起点X:</label><input type="number" id="aeX_${i}" value="${a.x}" step="1">
+        <label>起点Y:</label><input type="number" id="aeY_${i}" value="${a.y}" step="1">
+      </div>
+      <div class="ae-row">
+        <label>终点X:</label><input type="number" id="aeToX_${i}" value="${toX}" step="1">
+        <label>终点Y:</label><input type="number" id="aeToY_${i}" value="${toY}" step="1">
+      </div>`;
   } else if (a.type === 'wait') {
     // delay field covers this
   }
@@ -787,6 +851,12 @@ function applyEditAction(i) {
     a.url = document.getElementById(`aeUrl_${i}`).value.trim();
   } else if (a.type === 'scroll') {
     a.delta_y = parseFloat(document.getElementById(`aeDY_${i}`).value) || 0;
+  } else if (a.type === 'drag') {
+    a.x = parseFloat(document.getElementById(`aeX_${i}`).value) || 0;
+    a.y = parseFloat(document.getElementById(`aeY_${i}`).value) || 0;
+    if (!a.element_info) a.element_info = {};
+    a.element_info.toX = parseFloat(document.getElementById(`aeToX_${i}`).value) || 0;
+    a.element_info.toY = parseFloat(document.getElementById(`aeToY_${i}`).value) || 0;
   }
   a.delay = parseFloat(document.getElementById(`aeDelay_${i}`).value) || 0;
   editingActionIndex = -1;
@@ -843,6 +913,15 @@ function onAddActionTypeChange() {
     html = `<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">URL</label><input type="text" id="newActionUrl" placeholder="https://..." style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">`;
   } else if (type === 'scroll') {
     html = `<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">滚动量 (正数=向下)</label><input type="number" id="newActionDY" value="300" step="50" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">`;
+  } else if (type === 'drag') {
+    html = `<div style="display:flex;gap:8px">
+      <div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">起点 X</label><input type="number" id="newActionX" value="0" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></div>
+      <div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">起点 Y</label><input type="number" id="newActionY" value="0" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">终点 X</label><input type="number" id="newActionToX" value="100" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></div>
+      <div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">终点 Y</label><input type="number" id="newActionToY" value="100" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></div>
+    </div>`;
   } else if (type === 'wait') {
     // Only delay field needed, already in the modal
   }
@@ -869,6 +948,13 @@ function confirmAddAction() {
     if (!action.url) { toast('请输入 URL', 'error'); return; }
   } else if (type === 'scroll') {
     action.delta_y = parseFloat(document.getElementById('newActionDY').value) || 0;
+  } else if (type === 'drag') {
+    action.x = parseFloat(document.getElementById('newActionX').value) || 0;
+    action.y = parseFloat(document.getElementById('newActionY').value) || 0;
+    action.element_info = {
+      toX: parseFloat(document.getElementById('newActionToX').value) || 0,
+      toY: parseFloat(document.getElementById('newActionToY').value) || 0,
+    };
   }
 
   if (addActionInsertIndex >= 0 && addActionInsertIndex < recordedActions.length) {
@@ -919,10 +1005,18 @@ async function checkinOne(name) {
   const r = await api(`/api/checkin/${encodeURIComponent(name)}`, 'POST');
   if (r.success) {
     toast(`${name} 签到成功!`, 'success');
-    addLog(`${name} 签到成功`);
+    if (r.vision_image) {
+      addLogWithImage(`${name} 签到成功 | 识图结果: ${r.vision_text || '(无内容)'}`, r.vision_image);
+    } else {
+      addLog(`${name} 签到成功`);
+    }
   } else {
     toast(`${name} 签到失败: ${r.result}`, 'error');
-    addLog(`${name} 签到失败: ${r.result}`);
+    if (r.vision_image) {
+      addLogWithImage(`${name} 签到失败: ${r.result} | 识图结果: ${r.vision_text || '(无内容)'}`, r.vision_image);
+    } else {
+      addLog(`${name} 签到失败: ${r.result}`);
+    }
   }
   refreshForums();
 }
@@ -931,7 +1025,7 @@ async function checkinAll() {
   toast('正在执行全部签到...', 'info');
   addLog('开始全部签到');
   const r = await api('/api/checkin', 'POST');
-  if (r.message) { toast(r.message, 'error'); return; }
+  if (r.message) { toast(r.message, 'error'); addLog(r.message); return; }
   const sCount = (r.success || []).length;
   const fCount = (r.failed || []).length;
   if (fCount === 0) {
@@ -941,6 +1035,14 @@ async function checkinAll() {
     toast(`签到完成 成功:${sCount} 失败:${fCount} (${failNames})`, 'error');
   }
   addLog(`全部签到完成: 成功${sCount} 失败${fCount}`);
+  // 显示每个论坛的识图截图
+  const vi = r.vision_images || {};
+  for (const [fname, vdata] of Object.entries(vi)) {
+    if (vdata.image) {
+      const matchInfo = vdata.matched ? `匹配: ${vdata.matched}` : '未匹配';
+      addLogWithImage(`[${fname}] 识图验证 (${matchInfo})`, vdata.image);
+    }
+  }
   refreshForums();
 }
 
@@ -1135,9 +1237,9 @@ setupCanvasEvents = function() {
   origSetupCanvasEvents();
   setupVisionEvents();
 
-  // Patch click to ignore during vision selection
+  // Patch mousedown to ignore during vision selection (prevents drag/click)
   const canvasEl = document.getElementById('browserCanvas');
-  canvasEl.addEventListener('click', (e) => {
+  canvasEl.addEventListener('mousedown', (e) => {
     if (visionSelectMode) { e.stopImmediatePropagation(); }
   }, true);
 };

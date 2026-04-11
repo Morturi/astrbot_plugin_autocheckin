@@ -75,9 +75,13 @@ class BrowserManager:
                     user_data_dir=user_data_dir,
                     block_webrtc=True,
                     i_know_what_im_doing=True,
-                    # 强制 1:1 像素比，避免 Windows DPI 缩放导致 VNC 画面偏大
+                    viewport={"width": 1366, "height": 768},
+                    config={
+                        "window.devicePixelRatio": 1.0,
+                    },
                     firefox_user_prefs={
                         "layout.css.devPixelsPerPx": "1.0",
+                        "layout.css.dpi": 96,
                     },
                 )
                 self._context = await self._cm.__aenter__()
@@ -106,7 +110,7 @@ class BrowserManager:
 
             self._page.set_default_timeout(self.page_load_timeout)
 
-            # 设置视口大小
+            # 固定视口大小，所有坐标以此为基准
             await self._page.set_viewport_size({"width": 1366, "height": 768})
 
             self.touch()
@@ -142,11 +146,12 @@ class BrowserManager:
             return False
 
     async def screenshot(self, quality: int = 60) -> bytes:
-        """截取当前页面的截图"""
+        """截取当前页面的截图，始终输出与视口一致的 CSS 像素分辨率"""
         if not self.is_running:
             return b""
         try:
-            return await self._page.screenshot(type="jpeg", quality=quality)
+            return await self._page.screenshot(
+                type="jpeg", quality=quality, scale="css")
         except Exception:
             return b""
 
@@ -179,6 +184,37 @@ class BrowserManager:
             await self._page.keyboard.press(key)
         except Exception as e:
             logger.warning(f"按键 {key} 失败: {e}")
+
+    async def mouse_down(self, x: float, y: float):
+        """鼠标按下"""
+        if not self.is_running:
+            return
+        self.touch()
+        try:
+            await self._page.mouse.move(x, y)
+            await self._page.mouse.down()
+        except Exception as e:
+            logger.warning(f"鼠标按下 ({x}, {y}) 失败: {e}")
+
+    async def mouse_move(self, x: float, y: float):
+        """鼠标移动"""
+        if not self.is_running:
+            return
+        try:
+            await self._page.mouse.move(x, y)
+        except Exception as e:
+            logger.warning(f"鼠标移动 ({x}, {y}) 失败: {e}")
+
+    async def mouse_up(self, x: float, y: float):
+        """鼠标释放"""
+        if not self.is_running:
+            return
+        self.touch()
+        try:
+            await self._page.mouse.move(x, y)
+            await self._page.mouse.up()
+        except Exception as e:
+            logger.warning(f"鼠标释放 ({x}, {y}) 失败: {e}")
 
     async def scroll(self, x: float, y: float, delta_y: float):
         """滚动页面"""

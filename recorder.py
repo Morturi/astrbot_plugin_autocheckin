@@ -104,6 +104,10 @@ class Recorder:
     def record_scroll(self, x: float, y: float, delta_y: float):
         self.record_action("scroll", x=x, y=y, delta_y=delta_y)
 
+    def record_drag(self, from_x: float, from_y: float, to_x: float, to_y: float):
+        self.record_action("drag", x=from_x, y=from_y,
+                           element_info={"toX": to_x, "toY": to_y})
+
     def record_wait(self, seconds: float):
         self.record_action("wait", delay=seconds)
 
@@ -312,6 +316,23 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
                     delta_y = action_dict.get("delta_y", 0)
                     await page.mouse.wheel(0, delta_y)
 
+                elif action_type == "drag":
+                    fx = action_dict.get("x", 0)
+                    fy = action_dict.get("y", 0)
+                    ei = action_dict.get("element_info", {})
+                    tx = ei.get("toX", action_dict.get("toX", fx))
+                    ty = ei.get("toY", action_dict.get("toY", fy))
+                    await page.mouse.move(fx, fy)
+                    await page.mouse.down()
+                    steps = max(int(((tx-fx)**2+(ty-fy)**2)**0.5/20), 5)
+                    for s in range(1, steps+1):
+                        mx = fx + (tx-fx)*s/steps
+                        my = fy + (ty-fy)*s/steps
+                        await page.mouse.move(mx, my)
+                        await asyncio.sleep(0.01)
+                    await page.mouse.move(tx, ty)
+                    await page.mouse.up()
+
                 elif action_type == "wait":
                     extra_wait = action_dict.get("delay", 1)
                     await asyncio.sleep(extra_wait)
@@ -405,7 +426,7 @@ async def vision_check(browser_manager, forum: ForumConfig,
             "x": region["x"], "y": region["y"],
             "width": region["width"], "height": region["height"],
         }
-        img_bytes = await page.screenshot(type="jpeg", quality=80, clip=clip)
+        img_bytes = await page.screenshot(type="jpeg", quality=80, clip=clip, scale="css")
         img_b64 = base64.b64encode(img_bytes).decode()
 
         # 构造多模态消息发送给 LLM

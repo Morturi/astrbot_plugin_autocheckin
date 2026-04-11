@@ -153,6 +153,26 @@ class WebServer:
                 x, y = msg.get("x", 0), msg.get("y", 0)
                 await self.browser_manager.page.mouse.dblclick(x, y)
 
+            elif action == "drag":
+                # 拖动已通过 mousedown/mousemove/mouseup 实时执行
+                # 此消息仅用于录制完整拖动操作
+                if self.recorder.is_recording:
+                    fx, fy = msg.get("fromX", 0), msg.get("fromY", 0)
+                    tx, ty = msg.get("toX", 0), msg.get("toY", 0)
+                    self.recorder.record_drag(fx, fy, tx, ty)
+
+            elif action == "mousedown":
+                x, y = msg.get("x", 0), msg.get("y", 0)
+                await self.browser_manager.mouse_down(x, y)
+
+            elif action == "mousemove":
+                x, y = msg.get("x", 0), msg.get("y", 0)
+                await self.browser_manager.mouse_move(x, y)
+
+            elif action == "mouseup":
+                x, y = msg.get("x", 0), msg.get("y", 0)
+                await self.browser_manager.mouse_up(x, y)
+
             elif action == "type":
                 text = msg.get("text", "")
                 await self.browser_manager.type_text(text)
@@ -302,23 +322,133 @@ class WebServer:
     # 签到 API
     async def _api_checkin_one(self, request: web.Request) -> web.Response:
         """手动签到单个论坛"""
-        from .recorder import run_checkin
+        from .recorder import run_checkin, vision_check as do_vision_check
         name = request.match_info["name"]
         forum = self.checkin_manager.get_forum(name)
         if not forum:
             return web.json_response({"success": False, "message": "论坛不存在"}, status=404)
-        result = await run_checkin(self.browser_manager, forum)
-        success = result == "success"
-        if success:
-            self.checkin_manager.update_checkin_result(name, "成功")
+        if not self.browser_manager.is_running:
+            try:
+                await self.browser_manager.launch()
+            except Exception as e:
+                return web.json_response({"success": False, "result": f"浏览器启动失败: {e}"})
+        result = await run_checkin(
+            self.browser_manager, forum,
+            context=self.astrbot_context,
+            vision_model_id=self.vision_model_id,
+            use_vision_check=self.use_vision_check,
+        )
+        success = result in ("success", "already_checked_in")
+        vision_image = ""
+        vision_text = ""
+
+        # 签到后执行识图验证并返回截图
+        if self.use_vision_check and forum.vision_region and forum.vision_keywords:
+            vr = await do_vision_check(
+                self.browser_manager, forum,
+                self.astrbot_context, self.vision_model_id,
+            )
+            vision_image = vr.get("image_b64", "")
+            vision_text = vr.get("llm_text", "")
+            if result == "success":
+                if vr["success"]:
+                    self.checkin_manager.update_checkin_result(
+                        name, f"成功 (识图验证: {vr['matched']})")
+                else:
+                    success = False
+                    result = f"识图验证未通过: {vr.get('error') or '未匹配关键词'}"
+                    self.checkin_manager.update_checkin_result(name, f"失败: {result}")
+            elif result == "already_checked_in":
+                self.checkin_manager.update_checkin_result(name, "成功 (已签到，跳过)")
+            else:
+                self.checkin_manager.update_checkin_result(name, f"失败: {result}")
         else:
-            self.checkin_manager.update_checkin_result(name, f"失败: {result}")
-        return web.json_response({"success": success, "result": result})
+            if success:
+                msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
+                self.checkin_manager.update_checkin_result(name, msg)
+            else:
+                self.checkin_manager.update_checkin_result(name, f"失败: {result}")
+
+        return web.json_response({
+            "success": success,
+            "result": result,
+            "vision_image": vision_image,
+            "vision_text": vision_text,
+        })
 
     async def _api_checkin_all(self, request: web.Request) -> web.Response:
         """手动签到所有论坛"""
-        from .recorder import run_all_checkins
-        results = await run_all_checkins(self.browser_manager, self.checkin_manager)
+        from .recorder import run_all_checkins, run_checkin, vision_check as do_vision_check
+
+        forums = self.checkin_manager.get_enabled_forums()
+        if not forums:
+            return web.json_response({
+                "success": [], "failed": [], "message": "没有启用的论坛"
+            })
+
+        if not self.browser_manager.is_running:
+            try:
+                await self.browser_manager.launch()
+            except Exception as e:
+                return web.json_response({
+                    "success": [], "failed": [],
+                    "message": f"浏览器启动失败: {e}"
+                })
+
+        results = {"success": [], "failed": [], "vision_images": {}}
+
+        for forum in forums:
+            result = await run_checkin(
+                self.browser_manager, forum,
+                context=self.astrbot_context,
+                vision_model_id=self.vision_model_id,
+                use_vision_check=self.use_vision_check,
+            )
+
+            # 识图验证
+            if self.use_vision_check and forum.vision_region and forum.vision_keywords:
+                vr = await do_vision_check(
+                    self.browser_manager, forum,
+                    self.astrbot_context, self.vision_model_id,
+                )
+                if vr.get("image_b64"):
+                    results["vision_images"][forum.name] = {
+                        "image": vr["image_b64"],
+                        "text": vr.get("llm_text", ""),
+                        "matched": vr.get("matched", ""),
+                    }
+                if result == "success":
+                    if vr["success"]:
+                        results["success"].append(forum.name)
+                        self.checkin_manager.update_checkin_result(
+                            forum.name, f"成功 (识图验证: {vr['matched']})")
+                    else:
+                        results["failed"].append({
+                            "name": forum.name,
+                            "error": f"识图验证未通过: {vr.get('error') or '未匹配关键词'}",
+                        })
+                        self.checkin_manager.update_checkin_result(
+                            forum.name, "失败: 识图验证未通过")
+                elif result == "already_checked_in":
+                    results["success"].append(forum.name)
+                    self.checkin_manager.update_checkin_result(
+                        forum.name, "成功 (已签到，跳过)")
+                else:
+                    results["failed"].append({"name": forum.name, "error": result})
+                    self.checkin_manager.update_checkin_result(
+                        forum.name, f"失败: {result}")
+            else:
+                if result in ("success", "already_checked_in"):
+                    results["success"].append(forum.name)
+                    msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
+                    self.checkin_manager.update_checkin_result(forum.name, msg)
+                else:
+                    results["failed"].append({"name": forum.name, "error": result})
+                    self.checkin_manager.update_checkin_result(
+                        forum.name, f"失败: {result}")
+
+            await asyncio.sleep(3)
+
         return web.json_response(results)
 
     # 识图验证 API

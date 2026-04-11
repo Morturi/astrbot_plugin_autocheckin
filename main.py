@@ -2,13 +2,14 @@
 AstrBot 自动签到插件
 - 通过 WebUI 可视化操作 Camoufox/Firefox 浏览器登录网站
 - 支持录制签到点击操作
-- 每日定时批量签到
+- 支持 Cron 表达式定时批量签到
 - 签到完成后通过机器人消息通知用户
 """
 
 import asyncio
 import os
 from pathlib import Path
+from datetime import datetime
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
@@ -16,6 +17,93 @@ from astrbot.api import logger, AstrBotConfig
 
 from .browser_manager import BrowserManager
 from .recorder import Recorder, CheckinManager, run_all_checkins, run_checkin, vision_check
+
+
+# ==================== Cron 解析 ====================
+
+class CronRule:
+    """解析并匹配单条 Cron 表达式（分 时 日 月 周）"""
+
+    def __init__(self, expr: str):
+        self.expr = expr.strip()
+        parts = self.expr.split()
+        if len(parts) != 5:
+            raise ValueError(f"Cron 表达式必须为 5 个字段: {self.expr}")
+        self._minute = self._parse_field(parts[0], 0, 59)
+        self._hour = self._parse_field(parts[1], 0, 23)
+        self._dom = self._parse_field(parts[2], 1, 31)
+        self._month = self._parse_field(parts[3], 1, 12)
+        self._dow = self._parse_field(parts[4], 0, 6)  # 0=周日, 1=周一 ... 6=周六
+
+    @staticmethod
+    def _parse_field(field: str, lo: int, hi: int) -> set[int]:
+        """解析单个 cron 字段，返回匹配的整数集合"""
+        result: set[int] = set()
+        for part in field.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            # */n 步进
+            if part.startswith("*/"):
+                step = int(part[2:])
+                if step <= 0:
+                    raise ValueError(f"步进值必须 > 0: {part}")
+                result.update(range(lo, hi + 1, step))
+            # n-m 范围（可带 /step）
+            elif "-" in part or "/" in part:
+                step = 1
+                if "/" in part:
+                    range_part, step_str = part.split("/", 1)
+                    step = int(step_str)
+                else:
+                    range_part = part
+                if "-" in range_part:
+                    a, b = range_part.split("-", 1)
+                    result.update(range(int(a), int(b) + 1, step))
+                else:
+                    result.update(range(int(range_part), hi + 1, step))
+            elif part == "*":
+                result.update(range(lo, hi + 1))
+            else:
+                result.add(int(part))
+        return result
+
+    def matches(self, dt: datetime) -> bool:
+        """判断 datetime 是否匹配本条规则"""
+        # 标准 cron: 0=Sun, 1=Mon ... 6=Sat
+        # Python isoweekday(): 1=Mon ... 7=Sun → 转为: Sun=0, Mon=1 ... Sat=6
+        dow = dt.isoweekday() % 7  # 1→1, 2→2, ... 6→6, 7→0
+        return (
+            dt.minute in self._minute
+            and dt.hour in self._hour
+            and dt.day in self._dom
+            and dt.month in self._month
+            and dow in self._dow
+        )
+
+    def __repr__(self):
+        return f"CronRule({self.expr!r})"
+
+
+def parse_cron_rules(text: str) -> list[CronRule]:
+    """从多行文本中解析 cron 表达式列表，跳过空行和注释"""
+    rules = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            rules.append(CronRule(line))
+        except (ValueError, IndexError) as e:
+            logger.warning(f"无效的 Cron 表达式 '{line}': {e}")
+    return rules
+
+
+def format_cron_for_display(rules: list[CronRule]) -> str:
+    """将 cron 规则列表格式化为可读字符串"""
+    if not rules:
+        return "未配置"
+    return ", ".join(r.expr for r in rules)
 from .web_server import WebServer
 
 
@@ -44,8 +132,7 @@ class ForumCheckinPlugin(Star):
 
         # 配置参数
         self.webui_port = int(config.get("webui_port", 9010))
-        self.checkin_hour = int(config.get("checkin_hour", 8))
-        self.checkin_minute = int(config.get("checkin_minute", 30))
+        self.cron_rules = parse_cron_rules(str(config.get("cron_rules", "30 8 * * *")))
         self.headless = bool(config.get("headless", True))
         self.screenshot_interval = int(config.get("screenshot_interval", 500))
         self.page_load_timeout = int(config.get("page_load_timeout", 30))
@@ -94,9 +181,7 @@ class ForumCheckinPlugin(Star):
 
         # 启动定时签到调度器
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
-        logger.info(
-            f"定时签到已设置: 每日 {self.checkin_hour:02d}:{self.checkin_minute:02d}"
-        )
+        logger.info(f"定时签到已设置: {format_cron_for_display(self.cron_rules)}")
 
         # 启动浏览器空闲自动关闭检查
         if self.browser_idle_timeout > 0:
@@ -129,37 +214,34 @@ class ForumCheckinPlugin(Star):
     # ==================== 定时调度 ====================
 
     async def _scheduler_loop(self):
-        """定时签到调度循环"""
-        from datetime import datetime, timedelta
+        """定时签到调度循环 — 每分钟检查 cron 规则是否匹配"""
+        if not self.cron_rules:
+            logger.warning("未配置有效的 Cron 规则，定时签到已禁用")
+            return
+
+        last_fire_minute = ""  # 防止同一分钟内重复触发
 
         while True:
             try:
+                await asyncio.sleep(30)  # 每 30 秒检查一次
                 now = datetime.now()
-                # 计算下次签到时间
-                target = now.replace(
-                    hour=self.checkin_hour,
-                    minute=self.checkin_minute,
-                    second=0,
-                    microsecond=0,
-                )
-                if target <= now:
-                    target += timedelta(days=1)
+                minute_key = now.strftime("%Y%m%d%H%M")
 
-                wait_seconds = (target - now).total_seconds()
-                logger.info(
-                    f"下次签到时间: {target.strftime('%Y-%m-%d %H:%M:%S')} "
-                    f"(约 {wait_seconds/3600:.1f} 小时后)"
-                )
-                await asyncio.sleep(wait_seconds)
+                if minute_key == last_fire_minute:
+                    continue
 
-                # 执行签到
-                await self._do_scheduled_checkin()
+                for rule in self.cron_rules:
+                    if rule.matches(now):
+                        last_fire_minute = minute_key
+                        logger.info(f"Cron 规则 [{rule.expr}] 触发签到")
+                        await self._do_scheduled_checkin()
+                        break  # 同一分钟只触发一次
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"定时签到调度异常: {e}")
-                await asyncio.sleep(60)  # 出错后等1分钟再试
+                await asyncio.sleep(60)
 
     async def _idle_check_loop(self):
         """定期检查浏览器空闲时间，超时则自动关闭"""
@@ -317,7 +399,7 @@ class ForumCheckinPlugin(Star):
 
         lines = [
             f"[自动签到] 共 {len(forums)} 个站点",
-            f"定时签到: 每日 {self.checkin_hour:02d}:{self.checkin_minute:02d}",
+            f"定时计划: {format_cron_for_display(self.cron_rules)}",
             f"WebUI: http://127.0.0.1:{self.webui_port}",
             "",
         ]
@@ -343,7 +425,7 @@ class ForumCheckinPlugin(Star):
         self._save_notify_targets()
         yield event.plain_result(
             "已绑定! 每日签到完成后将在此会话推送结果。\n"
-            f"签到时间: {self.checkin_hour:02d}:{self.checkin_minute:02d}"
+            f"计划: {format_cron_for_display(self.cron_rules)}"
         )
 
     @checkin_group.command("解绑")
