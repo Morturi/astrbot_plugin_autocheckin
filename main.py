@@ -465,12 +465,11 @@ class ForumCheckinPlugin(Star):
                         self.checkin_manager.update_checkin_result(
                             forum_name, f"成功 (识图验证: {vr['matched']})")
                     else:
-                        results["failed"].append({
-                            "name": forum_name,
-                            "error": f"识图验证未通过: {vr.get('error') or '未匹配关键词'}",
-                        })
+                        # 签到操作本身已成功，识图验证未确认不翻转为失败
+                        verified_success.append(forum_name)
+                        reason = vr.get("error") or "未匹配关键词"
                         self.checkin_manager.update_checkin_result(
-                            forum_name, "失败: 识图验证未通过")
+                            forum_name, f"成功 (识图验证未确认: {reason})")
                 else:
                     verified_success.append(forum_name)
             results["success"] = verified_success

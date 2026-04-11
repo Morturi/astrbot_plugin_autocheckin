@@ -355,9 +355,11 @@ class WebServer:
                     self.checkin_manager.update_checkin_result(
                         name, f"成功 (识图验证: {vr['matched']})")
                 else:
-                    success = False
-                    result = f"识图验证未通过: {vr.get('error') or '未匹配关键词'}"
-                    self.checkin_manager.update_checkin_result(name, f"失败: {result}")
+                    # 签到操作本身已成功，识图验证未确认不翻转为失败
+                    reason = vr.get("error") or "未匹配关键词"
+                    result = f"签到已执行，识图验证未确认: {reason}"
+                    self.checkin_manager.update_checkin_result(
+                        name, f"成功 (识图验证未确认: {reason})")
             elif result == "already_checked_in":
                 self.checkin_manager.update_checkin_result(name, "成功 (已签到，跳过)")
             else:
@@ -423,12 +425,11 @@ class WebServer:
                         self.checkin_manager.update_checkin_result(
                             forum.name, f"成功 (识图验证: {vr['matched']})")
                     else:
-                        results["failed"].append({
-                            "name": forum.name,
-                            "error": f"识图验证未通过: {vr.get('error') or '未匹配关键词'}",
-                        })
+                        # 签到操作本身已成功，识图验证未确认不翻转为失败
+                        results["success"].append(forum.name)
+                        reason = vr.get("error") or "未匹配关键词"
                         self.checkin_manager.update_checkin_result(
-                            forum.name, "失败: 识图验证未通过")
+                            forum.name, f"成功 (识图验证未确认: {reason})")
                 elif result == "already_checked_in":
                     results["success"].append(forum.name)
                     self.checkin_manager.update_checkin_result(

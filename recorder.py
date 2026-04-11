@@ -272,6 +272,10 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
                 logger.info(
                     f"[{forum.name}] 识图预检发现已签到: {pre_result['matched']}，跳过操作")
                 return "already_checked_in"
+            else:
+                # 预检未匹配 — 记录原因后继续执行签到操作
+                reason = pre_result.get("error") or "关键词未匹配"
+                logger.info(f"[{forum.name}] 识图预检未检测到已签到 ({reason})，继续执行签到")
 
         # 按顺序执行录制的操作
         for i, action_dict in enumerate(forum.actions):
