@@ -170,7 +170,8 @@ class ForumCheckinPlugin(Star):
 
     async def initialize(self):
         """插件初始化 - 启动 WebUI 和定时任务"""
-        # 确保 Camoufox 浏览器二进制已下载
+        # 确保系统依赖和 Camoufox 浏览器二进制已就绪
+        self._ensure_system_deps()
         await self._ensure_camoufox_binary()
 
         try:
@@ -187,6 +188,182 @@ class ForumCheckinPlugin(Star):
         if self.browser_idle_timeout > 0:
             self._idle_check_task = asyncio.create_task(self._idle_check_loop())
             logger.info(f"浏览器空闲自动关闭已启用: {self.browser_idle_timeout} 分钟")
+
+    # ==================== 系统依赖 ====================
+
+    def _ensure_system_deps(self):
+        """在 Linux 上检查并自动安装 Camoufox 所需的系统库"""
+        import platform
+        if platform.system() != "Linux":
+            return
+
+        import ctypes
+        required_libs = [
+            "libgtk-3.so.0",
+            "libdbus-glib-1.so.2",
+            "libasound.so.2",
+            "libXcomposite.so.1",
+            "libXdamage.so.1",
+            "libXrandr.so.2",
+            "libgbm.so.1",
+            "libpango-1.0.so.0",
+            "libatk-1.0.so.0",
+            "libatk-bridge-2.0.so.0",
+            "libcups.so.2",
+        ]
+        missing = []
+        for lib in required_libs:
+            try:
+                ctypes.cdll.LoadLibrary(lib)
+            except OSError:
+                missing.append(lib)
+
+        if not missing:
+            return
+
+        logger.info(f"检测到缺少 {len(missing)} 个系统库，正在自动安装...")
+
+        # 检测发行版并选择包管理器
+        distro_id = self._detect_distro()
+        pm_info = self._get_package_manager(distro_id)
+
+        if not pm_info:
+            logger.warning(
+                f"未识别的 Linux 发行版 ({distro_id})，请手动安装以下库:\n"
+                f"  {', '.join(missing)}")
+            return
+
+        pm_name = pm_info["name"]
+        packages = pm_info["packages"]
+        install_cmd = pm_info["install_cmd"]
+        update_cmd = pm_info.get("update_cmd")
+
+        logger.info(f"检测到包管理器: {pm_name}")
+
+        import subprocess
+        import shutil
+
+        if not shutil.which(pm_name):
+            logger.warning(
+                f"未找到包管理器 {pm_name}，请手动安装以下库:\n"
+                f"  {', '.join(missing)}")
+            return
+
+        try:
+            if update_cmd:
+                subprocess.run(
+                    update_cmd, check=True, capture_output=True, timeout=120,
+                )
+            subprocess.run(
+                install_cmd + packages,
+                check=True, capture_output=True, timeout=300,
+            )
+            logger.info("系统依赖安装完成")
+        except subprocess.CalledProcessError:
+            manual_cmd = " ".join(install_cmd + packages)
+            logger.warning(
+                f"自动安装系统依赖失败（可能需要 root 权限），请手动执行:\n"
+                f"  {manual_cmd}")
+        except Exception as e:
+            logger.warning(f"检查系统依赖时出错: {e}")
+
+    @staticmethod
+    def _detect_distro() -> str:
+        """通过 /etc/os-release 检测 Linux 发行版 ID"""
+        try:
+            with open("/etc/os-release", "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("ID="):
+                        return line.split("=", 1)[1].strip('"').lower()
+                    if line.startswith("ID_LIKE="):
+                        return line.split("=", 1)[1].strip('"').lower()
+        except FileNotFoundError:
+            pass
+        return ""
+
+    @staticmethod
+    def _get_package_manager(distro_id: str) -> dict | None:
+        """根据发行版 ID 返回包管理器信息"""
+        # Debian / Ubuntu 系
+        apt_packages = [
+            "libgtk-3-0", "libdbus-glib-1-2", "libasound2",
+            "libx11-xcb1", "libxcomposite1", "libxdamage1", "libxrandr2",
+            "libgbm1", "libpango-1.0-0", "libatk1.0-0", "libatk-bridge2.0-0",
+            "libcups2", "libxkbcommon0", "libatspi2.0-0",
+        ]
+        # RHEL / CentOS / Fedora 系
+        rpm_packages = [
+            "gtk3", "dbus-glib", "alsa-lib",
+            "libxcb", "libXcomposite", "libXdamage", "libXrandr",
+            "mesa-libgbm", "pango", "atk", "at-spi2-atk",
+            "cups-libs", "libxkbcommon", "at-spi2-core",
+        ]
+        # Arch Linux 系
+        pacman_packages = [
+            "gtk3", "dbus-glib", "alsa-lib",
+            "libxcomposite", "libxdamage", "libxrandr",
+            "mesa", "pango", "atk", "at-spi2-atk",
+            "libcups", "libxkbcommon", "at-spi2-core",
+        ]
+        # openSUSE 系
+        zypper_packages = [
+            "gtk3", "dbus-1-glib", "alsa-lib",
+            "libX11-xcb1", "libXcomposite1", "libXdamage1", "libXrandr2",
+            "libgbm1", "pango", "atk", "at-spi2-atk",
+            "libcups2", "libxkbcommon0", "at-spi2-core",
+        ]
+
+        # 发行版 → 包管理器映射
+        apt_distros = {"debian", "ubuntu", "linuxmint", "pop", "elementary",
+                       "zorin", "kali", "raspbian", "deepin", "uos"}
+        dnf_distros = {"fedora"}
+        yum_distros = {"rhel", "centos", "amzn", "ol", "rocky", "almalinux",
+                       "cloudlinux", "eurolinux", "scientific"}
+        pacman_distros = {"arch", "manjaro", "endeavouros", "garuda", "artix"}
+        zypper_distros = {"opensuse", "sles", "suse"}
+
+        # 支持 ID_LIKE 包含多个值的情况（如 "rhel fedora"）
+        ids = set(distro_id.split())
+
+        if ids & apt_distros or "debian" in distro_id or "ubuntu" in distro_id:
+            return {
+                "name": "apt-get",
+                "packages": apt_packages,
+                "update_cmd": ["apt-get", "update", "-qq"],
+                "install_cmd": ["apt-get", "install", "-y", "-qq"],
+            }
+        elif ids & dnf_distros:
+            return {
+                "name": "dnf",
+                "packages": rpm_packages,
+                "install_cmd": ["dnf", "install", "-y"],
+            }
+        elif ids & yum_distros or "rhel" in distro_id:
+            # 优先尝试 dnf（RHEL 8+ 默认），回退 yum
+            import shutil
+            pm = "dnf" if shutil.which("dnf") else "yum"
+            return {
+                "name": pm,
+                "packages": rpm_packages,
+                "install_cmd": [pm, "install", "-y"],
+            }
+        elif ids & pacman_distros or "arch" in distro_id:
+            return {
+                "name": "pacman",
+                "packages": pacman_packages,
+                "install_cmd": ["pacman", "-S", "--noconfirm", "--needed"],
+                "update_cmd": ["pacman", "-Sy"],
+            }
+        elif ids & zypper_distros or "suse" in distro_id:
+            return {
+                "name": "zypper",
+                "packages": zypper_packages,
+                "install_cmd": ["zypper", "install", "-y"],
+                "update_cmd": ["zypper", "refresh"],
+            }
+
+        return None
 
     # ==================== Camoufox 初始化 ====================
 
