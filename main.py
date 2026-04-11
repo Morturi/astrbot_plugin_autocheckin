@@ -1,0 +1,424 @@
+"""
+AstrBot 自动签到插件
+- 通过 WebUI 可视化操作 Camoufox/Firefox 浏览器登录网站
+- 支持录制签到点击操作
+- 每日定时批量签到
+- 签到完成后通过机器人消息通知用户
+"""
+
+import asyncio
+import os
+from pathlib import Path
+
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
+from astrbot.api.star import Context, Star, register
+from astrbot.api import logger, AstrBotConfig
+
+from .browser_manager import BrowserManager
+from .recorder import Recorder, CheckinManager, run_all_checkins, run_checkin, vision_check
+from .web_server import WebServer
+
+
+@register(
+    "astrbot_plugin_autocheckin",
+    "StarDev",
+    "多网站每日定时自动签到插件，支持 WebUI 可视化操作与签到流程录制",
+    "1.0.0",
+    "https://github.com/StarDevProcess/astrbot_plugin_autocheckin",
+)
+class ForumCheckinPlugin(Star):
+    def __init__(self, context: Context, config: AstrBotConfig):
+        super().__init__(context)
+        self.config = config
+
+        # 数据目录（持久化存储，不随插件更新丢失）
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            self.data_dir = str(
+                Path(get_astrbot_data_path()) / "plugin_data" / "autocheckin"
+            )
+        except ImportError:
+            self.data_dir = str(Path("data") / "plugin_data" / "autocheckin")
+
+        Path(self.data_dir).mkdir(parents=True, exist_ok=True)
+
+        # 配置参数
+        self.webui_port = int(config.get("webui_port", 9010))
+        self.checkin_hour = int(config.get("checkin_hour", 8))
+        self.checkin_minute = int(config.get("checkin_minute", 30))
+        self.headless = bool(config.get("headless", True))
+        self.screenshot_interval = int(config.get("screenshot_interval", 500))
+        self.page_load_timeout = int(config.get("page_load_timeout", 30))
+        self.action_delay = int(config.get("action_delay", 1000))
+        self.use_vision_check = bool(config.get("use_vision_check", False))
+        self.vision_model_id = str(config.get("vision_model_id", ""))
+        self.browser_idle_timeout = int(config.get("browser_idle_timeout", 10))
+
+        # 核心组件
+        self.browser_manager = BrowserManager(
+            data_dir=self.data_dir,
+            headless=self.headless,
+            page_load_timeout=self.page_load_timeout,
+        )
+        self.recorder = Recorder()
+        self.checkin_manager = CheckinManager(data_dir=self.data_dir)
+        self.web_server = WebServer(
+            browser_manager=self.browser_manager,
+            checkin_manager=self.checkin_manager,
+            recorder=self.recorder,
+            port=self.webui_port,
+            screenshot_interval=self.screenshot_interval,
+            astrbot_context=self.context,
+            use_vision_check=self.use_vision_check,
+            vision_model_id=self.vision_model_id,
+        )
+
+        # 存储 unified_msg_origin 用于主动发送签到结果
+        self._notify_targets: list[str] = []
+        self._load_notify_targets()
+
+        # 定时任务
+        self._scheduler_task: asyncio.Task | None = None
+        self._idle_check_task: asyncio.Task | None = None
+
+    async def initialize(self):
+        """插件初始化 - 启动 WebUI 和定时任务"""
+        # 确保 Camoufox 浏览器二进制已下载
+        await self._ensure_camoufox_binary()
+
+        try:
+            await self.web_server.start()
+            logger.info(f"自动签到 WebUI 已启动: http://0.0.0.0:{self.webui_port}")
+        except Exception as e:
+            logger.error(f"WebUI 启动失败: {e}")
+
+        # 启动定时签到调度器
+        self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        logger.info(
+            f"定时签到已设置: 每日 {self.checkin_hour:02d}:{self.checkin_minute:02d}"
+        )
+
+        # 启动浏览器空闲自动关闭检查
+        if self.browser_idle_timeout > 0:
+            self._idle_check_task = asyncio.create_task(self._idle_check_loop())
+            logger.info(f"浏览器空闲自动关闭已启用: {self.browser_idle_timeout} 分钟")
+
+    # ==================== Camoufox 初始化 ====================
+
+    async def _ensure_camoufox_binary(self):
+        """检查并自动下载 Camoufox 浏览器二进制"""
+        try:
+            from camoufox.pkgman import launch_path
+            exe_path = launch_path()
+            if os.path.exists(exe_path):
+                logger.info("Camoufox 浏览器二进制已就绪")
+                return
+        except Exception:
+            pass
+
+        logger.info("正在自动下载 Camoufox 浏览器二进制，首次运行需要等待...")
+        try:
+            from camoufox.pkgman import CamoufoxFetcher
+            fetcher = CamoufoxFetcher()
+            fetcher.fetch_latest()
+            fetcher.install()
+            logger.info("Camoufox 浏览器二进制下载完成")
+        except Exception as e:
+            logger.error(f"自动下载 Camoufox 浏览器失败: {e}，请手动执行: python -m camoufox fetch")
+
+    # ==================== 定时调度 ====================
+
+    async def _scheduler_loop(self):
+        """定时签到调度循环"""
+        from datetime import datetime, timedelta
+
+        while True:
+            try:
+                now = datetime.now()
+                # 计算下次签到时间
+                target = now.replace(
+                    hour=self.checkin_hour,
+                    minute=self.checkin_minute,
+                    second=0,
+                    microsecond=0,
+                )
+                if target <= now:
+                    target += timedelta(days=1)
+
+                wait_seconds = (target - now).total_seconds()
+                logger.info(
+                    f"下次签到时间: {target.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"(约 {wait_seconds/3600:.1f} 小时后)"
+                )
+                await asyncio.sleep(wait_seconds)
+
+                # 执行签到
+                await self._do_scheduled_checkin()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"定时签到调度异常: {e}")
+                await asyncio.sleep(60)  # 出错后等1分钟再试
+
+    async def _idle_check_loop(self):
+        """定期检查浏览器空闲时间，超时则自动关闭"""
+        timeout_seconds = self.browser_idle_timeout * 60
+        while True:
+            try:
+                await asyncio.sleep(30)  # 每30秒检查一次
+                if self.browser_manager.is_running:
+                    idle = self.browser_manager.idle_seconds
+                    if idle >= timeout_seconds:
+                        logger.info(
+                            f"浏览器已空闲 {idle/60:.1f} 分钟，自动关闭"
+                        )
+                        await self.browser_manager.shutdown()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"空闲检查异常: {e}")
+
+    async def _do_scheduled_checkin(self):
+        """执行定时签到并发送通知"""
+        logger.info("开始执行定时签到...")
+
+        results = await run_all_checkins(
+            self.browser_manager, self.checkin_manager, self.action_delay,
+            context=self.context, vision_model_id=self.vision_model_id,
+            use_vision_check=self.use_vision_check,
+        )
+
+        # 如果启用了识图验证，对执行了操作的论坛进行签到后二次验证
+        if self.use_vision_check:
+            verified_success = []
+            for forum_name in list(results.get("success", [])):
+                forum = self.checkin_manager.get_forum(forum_name)
+                # 预检已通过的（already_checked_in）无需再验证
+                if (forum and forum.vision_region and forum.vision_keywords
+                        and forum.last_result == "成功"):
+                    vr = await vision_check(
+                        self.browser_manager, forum,
+                        self.context, self.vision_model_id,
+                    )
+                    if vr["success"]:
+                        verified_success.append(forum_name)
+                        self.checkin_manager.update_checkin_result(
+                            forum_name, f"成功 (识图验证: {vr['matched']})")
+                    else:
+                        results["failed"].append({
+                            "name": forum_name,
+                            "error": f"识图验证未通过: {vr.get('error') or '未匹配关键词'}",
+                        })
+                        self.checkin_manager.update_checkin_result(
+                            forum_name, "失败: 识图验证未通过")
+                else:
+                    verified_success.append(forum_name)
+            results["success"] = verified_success
+
+        # 构建通知消息
+        msg = self._format_checkin_result(results)
+        logger.info(f"定时签到完成: {msg}")
+
+        # 发送通知给所有绑定的会话
+        await self._send_notifications(msg)
+
+    def _format_checkin_result(self, results: dict) -> str:
+        """格式化签到结果为消息文本"""
+        success_list = results.get("success", [])
+        failed_list = results.get("failed", [])
+        message = results.get("message", "")
+
+        if message:
+            return f"[自动签到] {message}"
+
+        lines = ["[自动签到] 每日签到执行完毕"]
+        lines.append(f"成功: {len(success_list)} | 失败: {len(failed_list)}")
+
+        if success_list:
+            lines.append(f"\n已签到: {', '.join(success_list)}")
+
+        if failed_list:
+            lines.append("\n未成功列表:")
+            for f in failed_list:
+                lines.append(f"  - {f['name']}: {f['error']}")
+
+        if not failed_list:
+            lines.append("\n全部签到完成!")
+
+        return "\n".join(lines)
+
+    # ==================== 通知管理 ====================
+
+    def _load_notify_targets(self):
+        """加载通知目标"""
+        import json
+
+        target_file = Path(self.data_dir) / "notify_targets.json"
+        if target_file.exists():
+            try:
+                with open(target_file, "r", encoding="utf-8") as f:
+                    self._notify_targets = json.load(f)
+            except Exception:
+                self._notify_targets = []
+
+    def _save_notify_targets(self):
+        """保存通知目标"""
+        import json
+
+        target_file = Path(self.data_dir) / "notify_targets.json"
+        with open(target_file, "w", encoding="utf-8") as f:
+            json.dump(self._notify_targets, f)
+
+    async def _send_notifications(self, msg: str):
+        """向所有绑定的会话发送通知"""
+        for umo in self._notify_targets:
+            try:
+                chain = MessageChain().message(msg)
+                await self.context.send_message(umo, chain)
+            except Exception as e:
+                logger.warning(f"发送通知到 {umo} 失败: {e}")
+
+    # ==================== 指令组 ====================
+
+    @filter.command_group("签到")
+    def checkin_group(self):
+        """自动签到管理"""
+        pass
+
+    @checkin_group.command("执行")
+    async def cmd_checkin_now(self, event: AstrMessageEvent):
+        """立即执行全部签到"""
+        forums = self.checkin_manager.get_enabled_forums()
+        if not forums:
+            yield event.plain_result("没有已启用的论坛。请先在 WebUI 中添加论坛并录制签到操作。")
+            return
+
+        yield event.plain_result(
+            f"开始签到 {len(forums)} 个论坛，请稍候..."
+        )
+
+        results = await run_all_checkins(
+            self.browser_manager, self.checkin_manager, self.action_delay
+        )
+        msg = self._format_checkin_result(results)
+        yield event.plain_result(msg)
+
+    @checkin_group.command("状态")
+    async def cmd_checkin_status(self, event: AstrMessageEvent):
+        """查看签到状态和论坛列表"""
+        forums = self.checkin_manager.get_all_forums()
+        if not forums:
+            yield event.plain_result(
+                "暂无论坛配置。\n"
+                f"请访问 WebUI 添加论坛: http://127.0.0.1:{self.webui_port}"
+            )
+            return
+
+        lines = [
+            f"[自动签到] 共 {len(forums)} 个站点",
+            f"定时签到: 每日 {self.checkin_hour:02d}:{self.checkin_minute:02d}",
+            f"WebUI: http://127.0.0.1:{self.webui_port}",
+            "",
+        ]
+        for f in forums:
+            status = "启用" if f["enabled"] else "禁用"
+            actions = f"{f['action_count']}步" if f["has_actions"] else "未录制"
+            last = f["last_result"] if f["last_checkin"] else "从未签到"
+            lines.append(
+                f"  [{status}] {f['name']} | 操作:{actions} | 上次:{last}"
+            )
+
+        yield event.plain_result("\n".join(lines))
+
+    @checkin_group.command("绑定")
+    async def cmd_checkin_bind(self, event: AstrMessageEvent):
+        """绑定当前会话接收签到结果通知"""
+        umo = event.unified_msg_origin
+        if umo in self._notify_targets:
+            yield event.plain_result("当前会话已绑定签到通知。")
+            return
+
+        self._notify_targets.append(umo)
+        self._save_notify_targets()
+        yield event.plain_result(
+            "已绑定! 每日签到完成后将在此会话推送结果。\n"
+            f"签到时间: {self.checkin_hour:02d}:{self.checkin_minute:02d}"
+        )
+
+    @checkin_group.command("解绑")
+    async def cmd_checkin_unbind(self, event: AstrMessageEvent):
+        """解除当前会话的签到通知绑定"""
+        umo = event.unified_msg_origin
+        if umo not in self._notify_targets:
+            yield event.plain_result("当前会话未绑定签到通知。")
+            return
+
+        self._notify_targets.remove(umo)
+        self._save_notify_targets()
+        yield event.plain_result("已解绑签到通知。")
+
+    @checkin_group.command("面板")
+    async def cmd_checkin_webui(self, event: AstrMessageEvent):
+        """获取 WebUI 控制面板地址"""
+        yield event.plain_result(
+            f"[自动签到] WebUI 控制面板\n"
+            f"地址: http://127.0.0.1:{self.webui_port}\n\n"
+            f"功能说明:\n"
+            f"1. 启动浏览器后，在画面中操作登录论坛\n"
+            f"2. 添加论坛并录制签到点击操作\n"
+            f"3. 保存录制后即可自动定时签到"
+        )
+
+    @checkin_group.command("单签")
+    async def cmd_checkin_one(self, event: AstrMessageEvent, forum_name: str):
+        """签到指定论坛。用法: /签到 单签 论坛名"""
+        forum = self.checkin_manager.get_forum(forum_name)
+        if not forum:
+            yield event.plain_result(f"未找到论坛: {forum_name}")
+            return
+
+        if not forum.actions:
+            yield event.plain_result(f"{forum_name} 尚未录制签到操作，请先在 WebUI 中录制。")
+            return
+
+        yield event.plain_result(f"正在签到: {forum_name}...")
+
+        if not self.browser_manager.is_running:
+            try:
+                await self.browser_manager.launch()
+            except Exception as e:
+                yield event.plain_result(f"浏览器启动失败: {e}")
+                return
+
+        result = await run_checkin(
+            self.browser_manager, forum, self.action_delay
+        )
+        if result == "success":
+            self.checkin_manager.update_checkin_result(forum_name, "成功")
+            yield event.plain_result(f"{forum_name} 签到成功!")
+        else:
+            self.checkin_manager.update_checkin_result(forum_name, f"失败: {result}")
+            yield event.plain_result(f"{forum_name} 签到失败: {result}")
+
+    # ==================== 生命周期 ====================
+
+    async def terminate(self):
+        """插件卸载/停用时清理资源"""
+        if self._scheduler_task:
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._idle_check_task:
+            self._idle_check_task.cancel()
+            try:
+                await self._idle_check_task
+            except asyncio.CancelledError:
+                pass
+
+        await self.web_server.stop()
+        await self.browser_manager.shutdown()
+        logger.info("自动签到插件已停止")

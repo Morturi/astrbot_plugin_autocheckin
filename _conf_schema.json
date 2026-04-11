@@ -1,0 +1,62 @@
+{
+  "webui_port": {
+    "description": "WebUI 控制面板端口",
+    "type": "int",
+    "default": 9010,
+    "hint": "用于访问浏览器可视化控制面板和 VNC 操作界面的端口号"
+  },
+  "checkin_hour": {
+    "description": "每日签到时间（小时）",
+    "type": "int",
+    "default": 8,
+    "hint": "每日自动签到的触发时间（24小时制），默认早上8点"
+  },
+  "checkin_minute": {
+    "description": "每日签到时间（分钟）",
+    "type": "int",
+    "default": 30,
+    "hint": "每日自动签到的触发分钟数，默认30分"
+  },
+  "headless": {
+    "description": "无头模式",
+    "type": "bool",
+    "default": true,
+    "hint": "是否以无头模式运行浏览器。关闭后浏览器窗口将可见（仅在有桌面环境时有效）"
+  },
+  "screenshot_interval": {
+    "description": "截图刷新间隔（毫秒）",
+    "type": "int",
+    "default": 500,
+    "hint": "WebUI 中浏览器画面的刷新间隔，值越小越流畅但 CPU 占用越高"
+  },
+  "page_load_timeout": {
+    "description": "页面加载超时（秒）",
+    "type": "int",
+    "default": 30,
+    "hint": "导航到论坛页面时的最大等待时间"
+  },
+  "action_delay": {
+    "description": "操作间隔（毫秒）",
+    "type": "int",
+    "default": 1000,
+    "hint": "回放签到操作时每个步骤之间的等待时间"
+  },
+  "use_vision_check": {
+    "description": "启用识图验证签到结果",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，签到完成时将截取指定区域发送给多模态大模型，识别签到是否成功"
+  },
+  "vision_model_id": {
+    "description": "识图使用的模型 ID",
+    "type": "str",
+    "default": "",
+    "hint": "用于识图验证的多模态大模型 ID（从 AstrBot 已配置的模型中选择），留空则使用当前默认模型"
+  },
+  "browser_idle_timeout": {
+    "description": "浏览器空闲自动关闭（分钟）",
+    "type": "int",
+    "default": 10,
+    "hint": "浏览器后台空闲超过此时间后自动关闭，设为 0 则不自动关闭"
+  }
+}
