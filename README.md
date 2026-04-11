@@ -106,6 +106,10 @@ python -m camoufox fetch
 - [aiohttp](https://github.com/aio-libs/aiohttp) — WebUI 服务器
 - [playwright](https://github.com/microsoft/playwright-python) — 浏览器自动化（由 camoufox 内部使用）
 
+## TODO
+
+- [ ] **优化定时任务**：将目前的签到时间配置（`checkin_hour` / `checkin_minute`）重构为计划任务（Crontab）表达式格式，以实现更灵活的自定义调度（如特定工作日签到、多时间段签到等）。
+
 ## 许可证
 
-MIT
+AGPL-3.0 license
