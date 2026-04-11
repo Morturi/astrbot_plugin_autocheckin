@@ -123,10 +123,10 @@ class ForumCheckinPlugin(Star):
         try:
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
             self.data_dir = str(
-                Path(get_astrbot_data_path()) / "plugin_data" / "autocheckin"
+                Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_autocheckin"
             )
         except ImportError:
-            self.data_dir = str(Path("data") / "plugin_data" / "autocheckin")
+            self.data_dir = str(Path("data") / "plugin_data" / "astrbot_plugin_autocheckin")
 
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
 
