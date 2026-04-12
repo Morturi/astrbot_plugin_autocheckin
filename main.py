@@ -10,6 +10,7 @@ import asyncio
 import os
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
@@ -133,6 +134,7 @@ class ForumCheckinPlugin(Star):
         # 配置参数
         self.webui_port = int(config.get("webui_port", 9010))
         self.cron_rules = parse_cron_rules(str(config.get("cron_rules", "30 8 * * *")))
+        self.timezone = self._parse_timezone(str(config.get("timezone", "Asia/Shanghai")))
         self.headless = bool(config.get("headless", True))
         self.screenshot_interval = int(config.get("screenshot_interval", 500))
         self.page_load_timeout = int(config.get("page_load_timeout", 30))
@@ -182,7 +184,7 @@ class ForumCheckinPlugin(Star):
 
         # 启动定时签到调度器
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
-        logger.info(f"定时签到已设置: {format_cron_for_display(self.cron_rules)}")
+        logger.info(f"定时签到已设置: {format_cron_for_display(self.cron_rules)} (时区: {self.timezone})")
 
         # 启动浏览器空闲自动关闭检查
         if self.browser_idle_timeout > 0:
@@ -190,6 +192,15 @@ class ForumCheckinPlugin(Star):
             logger.info(f"浏览器空闲自动关闭已启用: {self.browser_idle_timeout} 分钟")
 
     # ==================== 系统依赖 ====================
+
+    @staticmethod
+    def _parse_timezone(tz_str: str) -> ZoneInfo:
+        """解析时区字符串，无效时回退到 Asia/Shanghai"""
+        try:
+            return ZoneInfo(tz_str)
+        except (KeyError, Exception) as e:
+            logger.warning(f"无效的时区 '{tz_str}'，使用默认时区 Asia/Shanghai: {e}")
+            return ZoneInfo("Asia/Shanghai")
 
     def _ensure_system_deps(self):
         """在 Linux 上检查并自动安装 Camoufox 所需的系统库"""
@@ -401,7 +412,7 @@ class ForumCheckinPlugin(Star):
         while True:
             try:
                 await asyncio.sleep(30)  # 每 30 秒检查一次
-                now = datetime.now()
+                now = datetime.now(self.timezone)
                 minute_key = now.strftime("%Y%m%d%H%M")
 
                 if minute_key == last_fire_minute:
@@ -575,7 +586,7 @@ class ForumCheckinPlugin(Star):
 
         lines = [
             f"[自动签到] 共 {len(forums)} 个站点",
-            f"定时计划: {format_cron_for_display(self.cron_rules)}",
+            f"定时计划: {format_cron_for_display(self.cron_rules)} (时区: {self.timezone})",
             f"WebUI: http://127.0.0.1:{self.webui_port}",
             "",
         ]
