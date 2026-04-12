@@ -352,18 +352,18 @@ class WebServer:
             )
             vision_image = vr.get("image_b64", "")
             vision_text = vr.get("llm_text", "")
-            if result == "success":
-                if vr["success"]:
-                    self.checkin_manager.update_checkin_result(
-                        name, f"成功 (识图验证: {vr['matched']})")
-                else:
-                    # 签到操作本身已成功，识图验证未确认不翻转为失败
-                    reason = vr.get("error") or "未匹配关键词"
-                    result = f"签到已执行，识图验证未确认: {reason}"
-                    self.checkin_manager.update_checkin_result(
-                        name, f"成功 (识图验证未确认: {reason})")
+            if vr["success"]:
+                # 后验证确认签到成功 — 无论预检或签到操作返回什么，以此为准
+                success = True
+                self.checkin_manager.update_checkin_result(
+                    name, f"成功 (识图验证: {vr['matched']})")
             elif result == "already_checked_in":
                 self.checkin_manager.update_checkin_result(name, "成功 (已签到，跳过)")
+            elif result == "success":
+                # 签到操作已执行但后验证未确认
+                reason = vr.get("error") or "未匹配关键词"
+                self.checkin_manager.update_checkin_result(
+                    name, f"成功 (识图验证未确认: {reason})")
             else:
                 self.checkin_manager.update_checkin_result(name, f"失败: {result}")
         else:
@@ -422,21 +422,21 @@ class WebServer:
                         "text": vr.get("llm_text", ""),
                         "matched": vr.get("matched", ""),
                     }
-                if result == "success":
-                    if vr["success"]:
-                        results["success"].append(forum.name)
-                        self.checkin_manager.update_checkin_result(
-                            forum.name, f"成功 (识图验证: {vr['matched']})")
-                    else:
-                        # 签到操作本身已成功，识图验证未确认不翻转为失败
-                        results["success"].append(forum.name)
-                        reason = vr.get("error") or "未匹配关键词"
-                        self.checkin_manager.update_checkin_result(
-                            forum.name, f"成功 (识图验证未确认: {reason})")
+                if vr["success"]:
+                    # 后验证确认签到成功 — 无论预检或签到操作返回什么，以此为准
+                    results["success"].append(forum.name)
+                    self.checkin_manager.update_checkin_result(
+                        forum.name, f"成功 (识图验证: {vr['matched']})")
                 elif result == "already_checked_in":
                     results["success"].append(forum.name)
                     self.checkin_manager.update_checkin_result(
                         forum.name, "成功 (已签到，跳过)")
+                elif result == "success":
+                    # 签到操作已执行但后验证未确认
+                    results["success"].append(forum.name)
+                    reason = vr.get("error") or "未匹配关键词"
+                    self.checkin_manager.update_checkin_result(
+                        forum.name, f"成功 (识图验证未确认: {reason})")
                 else:
                     results["failed"].append({"name": forum.name, "error": result})
                     self.checkin_manager.update_checkin_result(

@@ -269,17 +269,19 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
         # 签到前识图预检：如果已签到则跳过操作
         if (use_vision_check and context and
                 forum.vision_region and forum.vision_keywords):
-            logger.info(f"[{forum.name}] 执行签到前识图预检...")
-            pre_result = await vision_check(
-                browser_manager, forum, context, vision_model_id)
-            if pre_result["success"]:
-                logger.info(
-                    f"[{forum.name}] 识图预检发现已签到: {pre_result['matched']}，跳过操作")
-                return "already_checked_in"
-            else:
-                # 预检未匹配 — 记录原因后继续执行签到操作
-                reason = pre_result.get("error") or "关键词未匹配"
-                logger.info(f"[{forum.name}] 识图预检未检测到已签到 ({reason})，继续执行签到")
+            try:
+                logger.info(f"[{forum.name}] 执行签到前识图预检...")
+                pre_result = await vision_check(
+                    browser_manager, forum, context, vision_model_id)
+                if pre_result["success"]:
+                    logger.info(
+                        f"[{forum.name}] 识图预检发现已签到: {pre_result['matched']}，跳过操作")
+                    return "already_checked_in"
+                else:
+                    reason = pre_result.get("error") or "关键词未匹配"
+                    logger.info(f"[{forum.name}] 识图预检未检测到已签到 ({reason})，继续执行签到")
+            except Exception as e:
+                logger.warning(f"[{forum.name}] 识图预检出错，跳过预检继续签到: {e}")
 
         # 按顺序执行录制的操作
         for i, action_dict in enumerate(forum.actions):
