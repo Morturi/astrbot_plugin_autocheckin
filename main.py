@@ -590,17 +590,14 @@ class ForumCheckinPlugin(Star):
 
         lines = [
             f"[自动签到] 共 {len(forums)} 个站点",
-            f"定时计划: {format_cron_for_display(self.cron_rules)} (时区: {self.timezone})",
-            f"WebUI: http://127.0.0.1:{self.webui_port}",
+            f"定时计划: {format_cron_for_display(self.cron_rules)}",
             "",
         ]
         for f in forums:
-            status = "启用" if f["enabled"] else "禁用"
-            actions = f"{f['action_count']}步" if f["has_actions"] else "未录制"
-            last = f["last_result"] if f["last_checkin"] else "从未签到"
-            lines.append(
-                f"  [{status}] {f['name']} | 操作:{actions} | 上次:{last}"
-            )
+            if f["last_checkin"]:
+                lines.append(f"  {f['name']} | {f['last_result']} | {f['last_checkin']}")
+            else:
+                lines.append(f"  {f['name']} | 从未签到")
 
         yield event.plain_result("\n".join(lines))
 
