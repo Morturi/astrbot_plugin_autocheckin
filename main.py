@@ -139,6 +139,7 @@ class ForumCheckinPlugin(Star):
         self.screenshot_interval = int(config.get("screenshot_interval", 500))
         self.page_load_timeout = int(config.get("page_load_timeout", 30))
         self.action_delay = int(config.get("action_delay", 1000))
+        self.checkin_wait = int(config.get("checkin_wait", 5))
         self.use_vision_check = bool(config.get("use_vision_check", False))
         self.vision_model_id = str(config.get("vision_model_id", ""))
         self.browser_idle_timeout = int(config.get("browser_idle_timeout", 10))
@@ -160,6 +161,7 @@ class ForumCheckinPlugin(Star):
             astrbot_context=self.context,
             use_vision_check=self.use_vision_check,
             vision_model_id=self.vision_model_id,
+            checkin_wait=self.checkin_wait,
         )
 
         # 存储 unified_msg_origin 用于主动发送签到结果
@@ -457,6 +459,7 @@ class ForumCheckinPlugin(Star):
             self.browser_manager, self.checkin_manager, self.action_delay,
             context=self.context, vision_model_id=self.vision_model_id,
             use_vision_check=self.use_vision_check,
+            checkin_wait=self.checkin_wait,
         )
 
         # 如果启用了识图验证，对执行了操作的论坛进行签到后二次验证
@@ -568,7 +571,8 @@ class ForumCheckinPlugin(Star):
         )
 
         results = await run_all_checkins(
-            self.browser_manager, self.checkin_manager, self.action_delay
+            self.browser_manager, self.checkin_manager, self.action_delay,
+            checkin_wait=self.checkin_wait,
         )
         msg = self._format_checkin_result(results)
         yield event.plain_result(msg)
@@ -661,7 +665,8 @@ class ForumCheckinPlugin(Star):
                 return
 
         result = await run_checkin(
-            self.browser_manager, forum, self.action_delay
+            self.browser_manager, forum, self.action_delay,
+            checkin_wait=self.checkin_wait,
         )
         if result == "success":
             self.checkin_manager.update_checkin_result(forum_name, "成功")

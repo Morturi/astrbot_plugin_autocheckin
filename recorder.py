@@ -237,7 +237,8 @@ class CheckinManager:
 
 async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1000,
                       context=None, vision_model_id: str = "",
-                      use_vision_check: bool = False) -> str:
+                      use_vision_check: bool = False,
+                      checkin_wait: int = 5) -> str:
     """
     执行单个论坛的签到操作
 
@@ -260,7 +261,10 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
         except Exception as e:
             return f"页面加载失败: {str(e)[:50]}"
 
-        await asyncio.sleep(2)  # 等待页面完全渲染
+        # 等待页面完全加载
+        if checkin_wait > 0:
+            logger.info(f"[{forum.name}] 等待页面加载 {checkin_wait} 秒...")
+            await asyncio.sleep(checkin_wait)
 
         # 签到前识图预检：如果已签到则跳过操作
         if (use_vision_check and context and
@@ -358,7 +362,8 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
 async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
                            action_delay: int = 1000,
                            context=None, vision_model_id: str = "",
-                           use_vision_check: bool = False) -> dict:
+                           use_vision_check: bool = False,
+                           checkin_wait: int = 5) -> dict:
     """
     执行所有启用论坛的签到
 
@@ -383,6 +388,7 @@ async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
             browser_manager, forum, action_delay,
             context=context, vision_model_id=vision_model_id,
             use_vision_check=use_vision_check,
+            checkin_wait=checkin_wait,
         )
         if result in ("success", "already_checked_in"):
             results["success"].append(forum.name)

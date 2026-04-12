@@ -27,7 +27,7 @@ class WebServer:
     def __init__(self, browser_manager, checkin_manager, recorder,
                  port: int = 9010, screenshot_interval: int = 500,
                  astrbot_context=None, use_vision_check: bool = False,
-                 vision_model_id: str = ""):
+                 vision_model_id: str = "", checkin_wait: int = 5):
         self.browser_manager = browser_manager
         self.checkin_manager = checkin_manager
         self.recorder = recorder
@@ -36,6 +36,7 @@ class WebServer:
         self.astrbot_context = astrbot_context
         self.use_vision_check = use_vision_check
         self.vision_model_id = vision_model_id
+        self.checkin_wait = checkin_wait
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._ws_clients: set[web.WebSocketResponse] = set()
@@ -337,6 +338,7 @@ class WebServer:
             context=self.astrbot_context,
             vision_model_id=self.vision_model_id,
             use_vision_check=self.use_vision_check,
+            checkin_wait=self.checkin_wait,
         )
         success = result in ("success", "already_checked_in")
         vision_image = ""
@@ -405,6 +407,7 @@ class WebServer:
                 context=self.astrbot_context,
                 vision_model_id=self.vision_model_id,
                 use_vision_check=self.use_vision_check,
+                checkin_wait=self.checkin_wait,
             )
 
             # 识图验证

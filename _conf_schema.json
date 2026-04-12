@@ -41,6 +41,12 @@
     "default": 1000,
     "hint": "回放签到操作时每个步骤之间的等待时间"
   },
+  "checkin_wait": {
+    "description": "签到前页面等待时间（秒）",
+    "type": "int",
+    "default": 5,
+    "hint": "导航到签到页面后、执行签到操作前的等待时间，性能较差的设备或加载较慢的网站可适当增大"
+  },
   "use_vision_check": {
     "description": "启用识图验证签到结果",
     "type": "bool",
