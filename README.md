@@ -136,6 +136,11 @@ python -m camoufox fetch
 - [aiohttp](https://github.com/aio-libs/aiohttp) — WebUI 服务器
 - [playwright](https://github.com/microsoft/playwright-python) — 浏览器自动化（由 camoufox 内部使用）
 
+## TODO
+
+- 清理 Camoufox 浏览器已启动（使用 camoufox 自带二进制）这一句提示的括号，改为正常的Camoufox 浏览器已启动
+- 把项目内对待签到网站的称呼由论坛改为站点，英文称呼forum改为site并统一修改所有变量，注释
+
 ## 许可证
 
 AGPL-3.0 license
