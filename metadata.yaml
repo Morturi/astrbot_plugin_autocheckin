@@ -1,6 +1,6 @@
 name: astrbot_plugin_autocheckin
 display_name: 自动签到
 desc: 通过 Camoufox 浏览器自动化实现多网站每日定时签到，支持 WebUI 可视化操作与签到流程录制。
-version: v1.0.0
+version: v1.0.1
 author: StarDev
 repo: https://github.com/StarDevProcess/astrbot_plugin_autocheckin

@@ -111,7 +111,7 @@ from .web_server import WebServer
     "astrbot_plugin_autocheckin",
     "StarDev",
     "多网站每日定时自动签到插件，支持 WebUI 可视化操作与签到流程录制",
-    "1.0.0",
+    "1.0.1",
     "https://github.com/StarDevProcess/astrbot_plugin_autocheckin",
 )
 class ForumCheckinPlugin(Star):
