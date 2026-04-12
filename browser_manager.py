@@ -77,7 +77,23 @@ class BrowserManager:
                     i_know_what_im_doing=True,
                     viewport={"width": 1366, "height": 768},
                     config={
+                        # 固定 DPR，防止随机缩放
                         "window.devicePixelRatio": 1.0,
+                        # 固定窗口视口尺寸，禁用 BrowserForge 随机化
+                        "window.innerWidth": 1366,
+                        "window.innerHeight": 768,
+                        "window.outerWidth": 1366,
+                        "window.outerHeight": 848,
+                        # 固定屏幕尺寸
+                        "screen.width": 1920,
+                        "screen.height": 1080,
+                        "screen.availWidth": 1920,
+                        "screen.availHeight": 1040,
+                        "screen.availTop": 0,
+                        "screen.availLeft": 0,
+                        # 固定窗口位置
+                        "window.screenX": 0,
+                        "window.screenY": 0,
                     },
                     firefox_user_prefs={
                         "layout.css.devPixelsPerPx": "1.0",
