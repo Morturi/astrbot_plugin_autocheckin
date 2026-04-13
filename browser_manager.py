@@ -101,7 +101,7 @@ class BrowserManager:
                     },
                 )
                 self._context = await self._cm.__aenter__()
-                logger.info("Camoufox 浏览器已启动（使用 camoufox 自带二进制）")
+                logger.info("Camoufox 浏览器已启动")
 
             except ImportError as e:
                 logger.error(f"导入 camoufox 失败: {e}")

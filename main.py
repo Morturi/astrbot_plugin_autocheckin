@@ -115,7 +115,7 @@ from .web_server import WebServer
     "1.0.1",
     "https://github.com/StarDevProcess/astrbot_plugin_autocheckin",
 )
-class ForumCheckinPlugin(Star):
+class SiteCheckinPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
@@ -462,30 +462,30 @@ class ForumCheckinPlugin(Star):
             checkin_wait=self.checkin_wait,
         )
 
-        # 如果启用了识图验证，对执行了操作的论坛进行签到后二次验证
+        # 如果启用了识图验证，对执行了操作的站点进行签到后二次验证
         if self.use_vision_check:
             verified_success = []
-            for forum_name in list(results.get("success", [])):
-                forum = self.checkin_manager.get_forum(forum_name)
+            for site_name in list(results.get("success", [])):
+                site = self.checkin_manager.get_site(site_name)
                 # 预检已通过的（already_checked_in）无需再验证
-                if (forum and forum.vision_region and forum.vision_keywords
-                        and forum.last_result == "成功"):
+                if (site and site.vision_region and site.vision_keywords
+                        and site.last_result == "成功"):
                     vr = await vision_check(
-                        self.browser_manager, forum,
+                        self.browser_manager, site,
                         self.context, self.vision_model_id,
                     )
                     if vr["success"]:
-                        verified_success.append(forum_name)
+                        verified_success.append(site_name)
                         self.checkin_manager.update_checkin_result(
-                            forum_name, f"成功 (识图验证: {vr['matched']})")
+                            site_name, f"成功 (识图验证: {vr['matched']})")
                     else:
                         # 签到操作本身已成功，识图验证未确认不翻转为失败
-                        verified_success.append(forum_name)
+                        verified_success.append(site_name)
                         reason = vr.get("error") or "未匹配关键词"
                         self.checkin_manager.update_checkin_result(
-                            forum_name, f"成功 (识图验证未确认: {reason})")
+                            site_name, f"成功 (识图验证未确认: {reason})")
                 else:
-                    verified_success.append(forum_name)
+                    verified_success.append(site_name)
             results["success"] = verified_success
 
         # 构建通知消息
@@ -561,17 +561,19 @@ class ForumCheckinPlugin(Star):
     @checkin_group.command("执行")
     async def cmd_checkin_now(self, event: AstrMessageEvent):
         """立即执行全部签到"""
-        forums = self.checkin_manager.get_enabled_forums()
-        if not forums:
-            yield event.plain_result("没有已启用的论坛。请先在 WebUI 中添加论坛并录制签到操作。")
+        sites = self.checkin_manager.get_enabled_sites()
+        if not sites:
+            yield event.plain_result("没有已启用的站点。请先在 WebUI 中添加站点并录制签到操作。")
             return
 
         yield event.plain_result(
-            f"开始签到 {len(forums)} 个论坛，请稍候..."
+            f"开始签到 {len(sites)} 个站点，请稍候..."
         )
 
         results = await run_all_checkins(
             self.browser_manager, self.checkin_manager, self.action_delay,
+            context=self.context, vision_model_id=self.vision_model_id,
+            use_vision_check=self.use_vision_check,
             checkin_wait=self.checkin_wait,
         )
         msg = self._format_checkin_result(results)
@@ -579,21 +581,21 @@ class ForumCheckinPlugin(Star):
 
     @checkin_group.command("状态")
     async def cmd_checkin_status(self, event: AstrMessageEvent):
-        """查看签到状态和论坛列表"""
-        forums = self.checkin_manager.get_all_forums()
-        if not forums:
+        """查看签到状态和站点列表"""
+        sites = self.checkin_manager.get_all_sites()
+        if not sites:
             yield event.plain_result(
-                "暂无论坛配置。\n"
-                f"请访问 WebUI 添加论坛: http://127.0.0.1:{self.webui_port}"
+                "暂无站点配置。\n"
+                f"请访问 WebUI 添加站点: http://127.0.0.1:{self.webui_port}"
             )
             return
 
         lines = [
-            f"[自动签到] 共 {len(forums)} 个站点",
+            f"[自动签到] 共 {len(sites)} 个站点",
             f"定时计划: {format_cron_for_display(self.cron_rules)}",
             "",
         ]
-        for f in forums:
+        for f in sites:
             if f["last_checkin"]:
                 lines.append(f"  {f['name']} | {f['last_result']} | {f['last_checkin']}")
             else:
@@ -635,24 +637,24 @@ class ForumCheckinPlugin(Star):
             f"[自动签到] WebUI 控制面板\n"
             f"地址: http://127.0.0.1:{self.webui_port}\n\n"
             f"功能说明:\n"
-            f"1. 启动浏览器后，在画面中操作登录论坛\n"
-            f"2. 添加论坛并录制签到点击操作\n"
+            f"1. 启动浏览器后，在画面中操作登录站点\n"
+            f"2. 添加站点并录制签到点击操作\n"
             f"3. 保存录制后即可自动定时签到"
         )
 
     @checkin_group.command("单签")
-    async def cmd_checkin_one(self, event: AstrMessageEvent, forum_name: str):
-        """签到指定论坛。用法: /签到 单签 论坛名"""
-        forum = self.checkin_manager.get_forum(forum_name)
-        if not forum:
-            yield event.plain_result(f"未找到论坛: {forum_name}")
+    async def cmd_checkin_one(self, event: AstrMessageEvent, site_name: str):
+        """签到指定站点。用法: /签到 单签 站点名"""
+        site = self.checkin_manager.get_site(site_name)
+        if not site:
+            yield event.plain_result(f"未找到站点: {site_name}")
             return
 
-        if not forum.actions:
-            yield event.plain_result(f"{forum_name} 尚未录制签到操作，请先在 WebUI 中录制。")
+        if not site.actions:
+            yield event.plain_result(f"{site_name} 尚未录制签到操作，请先在 WebUI 中录制。")
             return
 
-        yield event.plain_result(f"正在签到: {forum_name}...")
+        yield event.plain_result(f"正在签到: {site_name}...")
 
         if not self.browser_manager.is_running:
             try:
@@ -662,15 +664,49 @@ class ForumCheckinPlugin(Star):
                 return
 
         result = await run_checkin(
-            self.browser_manager, forum, self.action_delay,
+            self.browser_manager, site, self.action_delay,
+            context=self.context, vision_model_id=self.vision_model_id,
+            use_vision_check=self.use_vision_check,
             checkin_wait=self.checkin_wait,
         )
-        if result == "success":
-            self.checkin_manager.update_checkin_result(forum_name, "成功")
-            yield event.plain_result(f"{forum_name} 签到成功!")
+        success = result in ("success", "already_checked_in")
+
+        if self.use_vision_check and site.vision_region and site.vision_keywords:
+            vr = await vision_check(
+                self.browser_manager,
+                site,
+                self.context,
+                self.vision_model_id,
+            )
+            if vr["success"]:
+                success = True
+                self.checkin_manager.update_checkin_result(
+                    site_name, f"成功 (识图验证: {vr['matched']})"
+                )
+                yield event.plain_result(f"{site_name} 签到成功! 识图匹配: {vr['matched']}")
+                return
+            if result == "already_checked_in":
+                self.checkin_manager.update_checkin_result(site_name, "成功 (已签到，跳过)")
+                yield event.plain_result(f"{site_name} 今日已签到，已跳过。")
+                return
+            if result == "success":
+                reason = vr.get("error") or "未匹配关键词"
+                self.checkin_manager.update_checkin_result(
+                    site_name, f"成功 (识图验证未确认: {reason})"
+                )
+                yield event.plain_result(f"{site_name} 签到成功，但识图未确认: {reason}")
+                return
+
+        if success:
+            msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
+            self.checkin_manager.update_checkin_result(site_name, msg)
+            if result == "already_checked_in":
+                yield event.plain_result(f"{site_name} 今日已签到，已跳过。")
+            else:
+                yield event.plain_result(f"{site_name} 签到成功!")
         else:
-            self.checkin_manager.update_checkin_result(forum_name, f"失败: {result}")
-            yield event.plain_result(f"{forum_name} 签到失败: {result}")
+            self.checkin_manager.update_checkin_result(site_name, f"失败: {result}")
+            yield event.plain_result(f"{site_name} 签到失败: {result}")
 
     # ==================== 生命周期 ====================
 

@@ -33,7 +33,7 @@
     "description": "页面加载超时（秒）",
     "type": "int",
     "default": 30,
-    "hint": "导航到论坛页面时的最大等待时间"
+    "hint": "导航到站点页面时的最大等待时间"
   },
   "action_delay": {
     "description": "操作间隔（毫秒）",

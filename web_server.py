@@ -2,7 +2,7 @@
 WebUI 服务器 - 提供可视化浏览器控制面板
 - 通过 WebSocket 实时推送浏览器截图（模拟 VNC）
 - 接收用户的鼠标/键盘事件并转发给 Playwright
-- 提供论坛管理、录制控制等 REST API
+- 提供站点管理、录制控制等 REST API
 """
 
 import asyncio
@@ -82,11 +82,18 @@ class WebServer:
         app.router.add_post("/api/browser/launch", self._api_browser_launch)
         app.router.add_post("/api/browser/shutdown", self._api_browser_shutdown)
         app.router.add_post("/api/browser/navigate", self._api_browser_navigate)
-        # 论坛管理
-        app.router.add_get("/api/forums", self._api_get_forums)
-        app.router.add_post("/api/forums", self._api_add_forum)
-        app.router.add_delete("/api/forums/{name}", self._api_remove_forum)
-        app.router.add_post("/api/forums/{name}/toggle", self._api_toggle_forum)
+        # 站点管理
+        app.router.add_get("/api/sites", self._api_get_sites)
+        app.router.add_post("/api/sites", self._api_add_site)
+        app.router.add_delete("/api/sites/{name}", self._api_remove_site)
+        app.router.add_post("/api/sites/{name}/toggle", self._api_toggle_site)
+        app.router.add_post("/api/sites/{name}/actions", self._api_save_actions)
+        app.router.add_get("/api/sites/{name}/actions", self._api_get_actions)
+        # 兼容旧版接口
+        app.router.add_get("/api/forums", self._api_get_sites)
+        app.router.add_post("/api/forums", self._api_add_site)
+        app.router.add_delete("/api/forums/{name}", self._api_remove_site)
+        app.router.add_post("/api/forums/{name}/toggle", self._api_toggle_site)
         app.router.add_post("/api/forums/{name}/actions", self._api_save_actions)
         app.router.add_get("/api/forums/{name}/actions", self._api_get_actions)
         # 录制控制
@@ -97,6 +104,7 @@ class WebServer:
         app.router.add_post("/api/checkin/{name}", self._api_checkin_one)
         app.router.add_post("/api/checkin", self._api_checkin_all)
         # 识图验证
+        app.router.add_post("/api/sites/{name}/vision", self._api_save_vision)
         app.router.add_post("/api/forums/{name}/vision", self._api_save_vision)
         app.router.add_post("/api/vision/test", self._api_vision_test)
         app.router.add_get("/api/vision/config", self._api_vision_config)
@@ -235,8 +243,11 @@ class WebServer:
             "current_url": url,
             "recording": self.recorder.is_recording,
             "recording_actions": len(self.recorder.actions),
-            "forum_count": len(self.checkin_manager.forums),
-            "enabled_count": len(self.checkin_manager.get_enabled_forums()),
+            "site_count": len(self.checkin_manager.sites),
+            "enabled_site_count": len(self.checkin_manager.get_enabled_sites()),
+            # 兼容旧版前端字段
+            "forum_count": len(self.checkin_manager.sites),
+            "enabled_count": len(self.checkin_manager.get_enabled_sites()),
         })
 
     async def _api_browser_launch(self, request: web.Request) -> web.Response:
@@ -264,46 +275,46 @@ class WebServer:
         ok = await self.browser_manager.navigate(url)
         return web.json_response({"success": ok})
 
-    # 论坛管理 API
-    async def _api_get_forums(self, request: web.Request) -> web.Response:
-        return web.json_response(self.checkin_manager.get_all_forums())
+    # 站点管理 API
+    async def _api_get_sites(self, request: web.Request) -> web.Response:
+        return web.json_response(self.checkin_manager.get_all_sites())
 
-    async def _api_add_forum(self, request: web.Request) -> web.Response:
+    async def _api_add_site(self, request: web.Request) -> web.Response:
         body = await request.json()
         name = body.get("name", "").strip()
         url = body.get("url", "").strip()
         if not name or not url:
             return web.json_response({"success": False, "message": "名称和URL不能为空"}, status=400)
-        if self.checkin_manager.get_forum(name):
-            return web.json_response({"success": False, "message": "论坛名称已存在"}, status=400)
-        self.checkin_manager.add_forum(name, url)
+        if self.checkin_manager.get_site(name):
+            return web.json_response({"success": False, "message": "站点名称已存在"}, status=400)
+        self.checkin_manager.add_site(name, url)
         return web.json_response({"success": True})
 
-    async def _api_remove_forum(self, request: web.Request) -> web.Response:
+    async def _api_remove_site(self, request: web.Request) -> web.Response:
         name = request.match_info["name"]
-        ok = self.checkin_manager.remove_forum(name)
+        ok = self.checkin_manager.remove_site(name)
         return web.json_response({"success": ok})
 
-    async def _api_toggle_forum(self, request: web.Request) -> web.Response:
+    async def _api_toggle_site(self, request: web.Request) -> web.Response:
         name = request.match_info["name"]
-        ok = self.checkin_manager.toggle_forum(name)
+        ok = self.checkin_manager.toggle_site(name)
         return web.json_response({"success": ok})
 
     async def _api_save_actions(self, request: web.Request) -> web.Response:
-        """保存录制的操作到指定论坛"""
+        """保存录制的操作到指定站点"""
         name = request.match_info["name"]
         body = await request.json()
         actions = body.get("actions", [])
-        self.checkin_manager.update_forum_actions(name, actions)
+        self.checkin_manager.update_site_actions(name, actions)
         return web.json_response({"success": True, "count": len(actions)})
 
     async def _api_get_actions(self, request: web.Request) -> web.Response:
-        """获取论坛的录制操作"""
+        """获取站点的录制操作"""
         name = request.match_info["name"]
-        forum = self.checkin_manager.get_forum(name)
-        if not forum:
-            return web.json_response({"success": False, "message": "论坛不存在"}, status=404)
-        return web.json_response({"actions": forum.actions})
+        site = self.checkin_manager.get_site(name)
+        if not site:
+            return web.json_response({"success": False, "message": "站点不存在"}, status=404)
+        return web.json_response({"actions": site.actions})
 
     # 录制控制 API
     async def _api_record_start(self, request: web.Request) -> web.Response:
@@ -322,19 +333,19 @@ class WebServer:
 
     # 签到 API
     async def _api_checkin_one(self, request: web.Request) -> web.Response:
-        """手动签到单个论坛"""
+        """手动签到单个站点"""
         from .recorder import run_checkin, vision_check as do_vision_check
         name = request.match_info["name"]
-        forum = self.checkin_manager.get_forum(name)
-        if not forum:
-            return web.json_response({"success": False, "message": "论坛不存在"}, status=404)
+        site = self.checkin_manager.get_site(name)
+        if not site:
+            return web.json_response({"success": False, "message": "站点不存在"}, status=404)
         if not self.browser_manager.is_running:
             try:
                 await self.browser_manager.launch()
             except Exception as e:
                 return web.json_response({"success": False, "result": f"浏览器启动失败: {e}"})
         result = await run_checkin(
-            self.browser_manager, forum,
+            self.browser_manager, site,
             context=self.astrbot_context,
             vision_model_id=self.vision_model_id,
             use_vision_check=self.use_vision_check,
@@ -345,9 +356,9 @@ class WebServer:
         vision_text = ""
 
         # 签到后执行识图验证并返回截图
-        if self.use_vision_check and forum.vision_region and forum.vision_keywords:
+        if self.use_vision_check and site.vision_region and site.vision_keywords:
             vr = await do_vision_check(
-                self.browser_manager, forum,
+                self.browser_manager, site,
                 self.astrbot_context, self.vision_model_id,
             )
             vision_image = vr.get("image_b64", "")
@@ -381,13 +392,13 @@ class WebServer:
         })
 
     async def _api_checkin_all(self, request: web.Request) -> web.Response:
-        """手动签到所有论坛"""
-        from .recorder import run_all_checkins, run_checkin, vision_check as do_vision_check
+        """手动签到所有站点"""
+        from .recorder import run_checkin, vision_check as do_vision_check
 
-        forums = self.checkin_manager.get_enabled_forums()
-        if not forums:
+        sites = self.checkin_manager.get_enabled_sites()
+        if not sites:
             return web.json_response({
-                "success": [], "failed": [], "message": "没有启用的论坛"
+                "success": [], "failed": [], "message": "没有启用的站点"
             })
 
         if not self.browser_manager.is_running:
@@ -401,9 +412,9 @@ class WebServer:
 
         results = {"success": [], "failed": [], "vision_images": {}}
 
-        for forum in forums:
+        for site in sites:
             result = await run_checkin(
-                self.browser_manager, forum,
+                self.browser_manager, site,
                 context=self.astrbot_context,
                 vision_model_id=self.vision_model_id,
                 use_vision_check=self.use_vision_check,
@@ -411,45 +422,45 @@ class WebServer:
             )
 
             # 识图验证
-            if self.use_vision_check and forum.vision_region and forum.vision_keywords:
+            if self.use_vision_check and site.vision_region and site.vision_keywords:
                 vr = await do_vision_check(
-                    self.browser_manager, forum,
+                    self.browser_manager, site,
                     self.astrbot_context, self.vision_model_id,
                 )
                 if vr.get("image_b64"):
-                    results["vision_images"][forum.name] = {
+                    results["vision_images"][site.name] = {
                         "image": vr["image_b64"],
                         "text": vr.get("llm_text", ""),
                         "matched": vr.get("matched", ""),
                     }
                 if vr["success"]:
                     # 后验证确认签到成功 — 无论预检或签到操作返回什么，以此为准
-                    results["success"].append(forum.name)
+                    results["success"].append(site.name)
                     self.checkin_manager.update_checkin_result(
-                        forum.name, f"成功 (识图验证: {vr['matched']})")
+                        site.name, f"成功 (识图验证: {vr['matched']})")
                 elif result == "already_checked_in":
-                    results["success"].append(forum.name)
+                    results["success"].append(site.name)
                     self.checkin_manager.update_checkin_result(
-                        forum.name, "成功 (已签到，跳过)")
+                        site.name, "成功 (已签到，跳过)")
                 elif result == "success":
                     # 签到操作已执行但后验证未确认
-                    results["success"].append(forum.name)
+                    results["success"].append(site.name)
                     reason = vr.get("error") or "未匹配关键词"
                     self.checkin_manager.update_checkin_result(
-                        forum.name, f"成功 (识图验证未确认: {reason})")
+                        site.name, f"成功 (识图验证未确认: {reason})")
                 else:
-                    results["failed"].append({"name": forum.name, "error": result})
+                    results["failed"].append({"name": site.name, "error": result})
                     self.checkin_manager.update_checkin_result(
-                        forum.name, f"失败: {result}")
+                        site.name, f"失败: {result}")
             else:
                 if result in ("success", "already_checked_in"):
-                    results["success"].append(forum.name)
+                    results["success"].append(site.name)
                     msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
-                    self.checkin_manager.update_checkin_result(forum.name, msg)
+                    self.checkin_manager.update_checkin_result(site.name, msg)
                 else:
-                    results["failed"].append({"name": forum.name, "error": result})
+                    results["failed"].append({"name": site.name, "error": result})
                     self.checkin_manager.update_checkin_result(
-                        forum.name, f"失败: {result}")
+                        site.name, f"失败: {result}")
 
             await asyncio.sleep(3)
 
@@ -464,45 +475,45 @@ class WebServer:
         })
 
     async def _api_save_vision(self, request: web.Request) -> web.Response:
-        """保存论坛的识图选区和关键词"""
+        """保存站点的识图选区和关键词"""
         name = request.match_info["name"]
-        forum = self.checkin_manager.get_forum(name)
-        if not forum:
-            return web.json_response({"success": False, "message": "论坛不存在"}, status=404)
+        site = self.checkin_manager.get_site(name)
+        if not site:
+            return web.json_response({"success": False, "message": "站点不存在"}, status=404)
         body = await request.json()
         region = body.get("region", {})
         keywords = body.get("keywords", "")
-        self.checkin_manager.update_forum_vision(name, region, keywords)
+        self.checkin_manager.update_site_vision(name, region, keywords)
         return web.json_response({"success": True})
 
     async def _api_vision_test(self, request: web.Request) -> web.Response:
         """测试识图验证 - 截取指定区域发送给大模型"""
         from .recorder import vision_check as do_vision_check
         body = await request.json()
-        forum_name = body.get("forum_name", "")
+        site_name = body.get("site_name", "") or body.get("forum_name", "")
         # 支持临时传入 region/keywords 进行测试
         temp_region = body.get("region")
         temp_keywords = body.get("keywords")
 
-        if forum_name:
-            forum = self.checkin_manager.get_forum(forum_name)
-            if not forum:
-                return web.json_response({"success": False, "error": "论坛不存在"}, status=404)
+        if site_name:
+            site = self.checkin_manager.get_site(site_name)
+            if not site:
+                return web.json_response({"success": False, "error": "站点不存在"}, status=404)
         else:
-            # 没指定论坛时用临时参数构造
-            from .recorder import ForumConfig
-            forum = ForumConfig(name="test", url="")
+            # 没指定站点时用临时参数构造
+            from .recorder import SiteConfig
+            site = SiteConfig(name="test", url="")
 
         if temp_region:
-            forum.vision_region = temp_region
+            site.vision_region = temp_region
         if temp_keywords is not None:
-            forum.vision_keywords = temp_keywords
+            site.vision_keywords = temp_keywords
 
-        if not forum.vision_region:
+        if not site.vision_region:
             return web.json_response({"success": False, "error": "未设置识图选区"})
 
         result = await do_vision_check(
-            self.browser_manager, forum,
+            self.browser_manager, site,
             self.astrbot_context, self.vision_model_id,
         )
         return web.json_response(result)

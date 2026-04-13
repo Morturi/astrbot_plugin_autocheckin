@@ -15,6 +15,50 @@ AstrBot 自动签到插件 —— 通过 Camoufox 浏览器自动化实现多网
 - **登录持久化**：基于持久化浏览器 Profile，重启后无需重新登录
 - **空闲自动关闭**：浏览器空闲超时后自动关闭，节省资源
 
+## 插件逻辑
+
+### 核心链路
+
+1. 插件启动后初始化配置、数据目录、WebUI 服务、Cron 调度器和浏览器空闲检查任务。
+2. 用户先在 WebUI 中启动 Camoufox 浏览器，通过 VNC 画面手动登录目标站点。
+3. 用户为每个站点录制签到动作，动作会以浏览器原生坐标系保存到本地数据文件。
+4. 到达定时规则后，调度器遍历所有启用站点，逐个打开页面并回放录制动作。
+5. 如果启用了识图验证，系统会先做签到前预检，避免重复签到；签到后再做一次二次验证。
+6. 执行结果会更新到站点状态中，并通过机器人消息推送到已绑定会话。
+
+### 流程图
+
+```mermaid
+flowchart TD
+    A[插件启动] --> B[加载配置与数据目录]
+    B --> C[启动 WebUI]
+    B --> D[启动 Cron 调度器]
+    B --> E[启动浏览器空闲检查]
+
+    C --> F[用户启动 Camoufox 浏览器]
+    F --> G[用户在 WebUI 中登录站点]
+    G --> H[录制签到动作]
+    H --> I[保存站点配置与动作序列]
+
+    D --> J{Cron 命中?}
+    J -- 否 --> D
+    J -- 是 --> K[读取所有启用站点]
+    K --> L[逐个打开站点页面]
+    L --> M{启用识图预检?}
+    M -- 是且已匹配 --> N[标记已签到并跳过]
+    M -- 否或未匹配 --> O[回放录制动作]
+    O --> P{启用识图后验证?}
+    P -- 是且匹配 --> Q[标记成功]
+    P -- 是但未匹配 --> R[标记成功但未确认]
+    P -- 否 --> S[按动作执行结果记为成功或失败]
+    N --> T[更新站点签到状态]
+    Q --> T
+    R --> T
+    S --> T
+    T --> U[汇总成功/失败列表]
+    U --> V[推送机器人通知]
+```
+
 ## 安装
 
 1. 在 AstrBot 插件市场搜索 `astrbot_plugin_autocheckin` 安装，或手动克隆到插件目录：
@@ -71,10 +115,12 @@ python -m camoufox fetch
 |------|------|--------|------|
 | `webui_port` | int | 9010 | WebUI 控制面板端口 |
 | `cron_rules` | text | `30 8 * * *` | 定时签到计划，Cron 表达式，每行一条 |
+| `timezone` | string | `Asia/Shanghai` | 定时签到所使用的时区 |
 | `headless` | bool | true | 是否以无头模式运行浏览器 |
 | `screenshot_interval` | int | 500 | VNC 画面刷新间隔（毫秒） |
 | `page_load_timeout` | int | 30 | 页面加载超时（秒） |
 | `action_delay` | int | 1000 | 回放操作间隔（毫秒） |
+| `checkin_wait` | int | 5 | 打开签到页后、开始回放前的等待时间（秒） |
 | `use_vision_check` | bool | false | 是否启用识图验证签到结果 |
 | `vision_model_id` | string | "" | 识图使用的多模态大模型 ID |
 | `browser_idle_timeout` | int | 10 | 浏览器空闲自动关闭（分钟，0=不关闭） |
@@ -125,9 +171,11 @@ python -m camoufox fetch
 
 插件数据存储在 `<AstrBot数据目录>/plugin_data/astrbot_plugin_autocheckin/`：
 
-- `forums.json` — 站点配置与录制的操作序列
+- `sites.json` — 站点配置与录制的操作序列
 - `notify_targets.json` — 消息通知绑定列表
 - `browser_profile/` — 浏览器持久化 Profile（保持登录状态）
+
+兼容说明：如果检测到旧版 `forums.json`，插件会自动读取并迁移到 `sites.json`。
 
 ## 依赖
 
@@ -136,10 +184,11 @@ python -m camoufox fetch
 - [aiohttp](https://github.com/aio-libs/aiohttp) — WebUI 服务器
 - [playwright](https://github.com/microsoft/playwright-python) — 浏览器自动化（由 camoufox 内部使用）
 
-## TODO
+## 实现说明
 
-- 清理 Camoufox 浏览器已启动（使用 camoufox 自带二进制）这一句提示的括号，改为正常的Camoufox 浏览器已启动
-- 把项目内对待签到网站的称呼由论坛改为站点，英文称呼forum改为site并统一修改所有变量，注释
+- WebUI 与录制、回放、识图选区全部统一使用浏览器原生坐标系 `1366x768`。
+- 浏览器截图与识图裁剪统一使用 CSS 像素尺度，避免 DPI 与随机视口带来的偏移问题。
+- 识图结果采用“后验证优先”策略：只要后验证确认成功，即视为本次签到成功。
 
 ## 许可证
 

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -85,26 +85,26 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
-/* Forum List */
-.forum-item {
+/* Site List */
+.site-item {
   padding: 12px; margin-bottom: 8px; border-radius: var(--radius);
   background: var(--bg); border: 1px solid var(--border); position: relative;
 }
-.forum-item .fi-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.forum-item .fi-name { font-weight: 600; font-size: 14px; }
-.forum-item .fi-url { font-size: 11px; color: var(--text2); word-break: break-all; }
-.forum-item .fi-status { font-size: 11px; margin-top: 4px; }
-.forum-item .fi-actions { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
-.fi-badge {
+.site-item .si-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.site-item .si-name { font-weight: 600; font-size: 14px; }
+.site-item .si-url { font-size: 11px; color: var(--text2); word-break: break-all; }
+.site-item .si-status { font-size: 11px; margin-top: 4px; }
+.site-item .si-actions { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.si-badge {
   display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
 }
-.fi-badge.on { background: rgba(16,185,129,0.15); color: var(--success); }
-.fi-badge.off { background: rgba(239,68,68,0.15); color: var(--danger); }
-.fi-badge.ok { background: rgba(16,185,129,0.15); color: var(--success); }
-.fi-badge.fail { background: rgba(239,68,68,0.15); color: var(--danger); }
-.fi-badge.none { background: rgba(160,160,176,0.15); color: var(--text2); }
+.si-badge.on { background: rgba(16,185,129,0.15); color: var(--success); }
+.si-badge.off { background: rgba(239,68,68,0.15); color: var(--danger); }
+.si-badge.ok { background: rgba(16,185,129,0.15); color: var(--success); }
+.si-badge.fail { background: rgba(239,68,68,0.15); color: var(--danger); }
+.si-badge.none { background: rgba(160,160,176,0.15); color: var(--text2); }
 
-/* Add Forum Form */
+/* Add Site Form */
 .add-form { margin-bottom: 16px; }
 .add-form input {
   width: 100%; padding: 8px 12px; margin-bottom: 8px;
@@ -203,24 +203,24 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
     </div>
 
     <div class="tabs">
-      <div class="tab active" data-tab="forums">论坛管理</div>
+      <div class="tab active" data-tab="sites">站点管理</div>
       <div class="tab" data-tab="record">录制操作</div>
       <div class="tab" data-tab="vision" id="tabVision" style="display:none">识图选区</div>
       <div class="tab" data-tab="actions">操作日志</div>
     </div>
 
-    <!-- 论坛管理 -->
+    <!-- 站点管理 -->
     <div class="tab-content">
-      <div class="tab-panel active" id="panel-forums">
+      <div class="tab-panel active" id="panel-sites">
         <div class="add-form">
-          <input type="text" id="forumName" placeholder="论坛名称（如：吾爱破解）">
-          <input type="text" id="forumUrl" placeholder="签到页URL（如：https://...）">
+          <input type="text" id="siteName" placeholder="站点名称（如：吾爱破解）">
+          <input type="text" id="siteUrl" placeholder="签到页URL（如：https://...）">
           <div style="display:flex;gap:8px">
-            <button class="btn btn-primary btn-sm" onclick="addForum()">添加论坛</button>
+            <button class="btn btn-primary btn-sm" onclick="addSite()">添加站点</button>
             <button class="btn btn-success btn-sm" onclick="checkinAll()">全部签到</button>
           </div>
         </div>
-        <div id="forumList"></div>
+        <div id="siteList"></div>
       </div>
 
       <!-- 录制操作 -->
@@ -234,7 +234,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
             2. 点击"开始录制"<br>
             3. 在浏览器画面中完成签到操作<br>
             4. 点击"停止录制"<br>
-            5. 将录制结果保存到指定论坛
+            5. 将录制结果保存到指定站点
           </p>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
@@ -243,12 +243,12 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
         </div>
         <div style="margin-bottom:8px">
           <select id="saveTarget" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">
-            <option value="">-- 选择论坛 --</option>
+            <option value="">-- 选择站点 --</option>
           </select>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-          <button class="btn btn-success btn-sm" onclick="saveRecordToForum()" id="btnSaveRecord" disabled>保存到论坛</button>
-          <button class="btn btn-primary btn-sm" onclick="loadActionsFromForum()">加载论坛操作</button>
+          <button class="btn btn-success btn-sm" onclick="saveRecordToSite()" id="btnSaveRecord" disabled>保存到站点</button>
+          <button class="btn btn-primary btn-sm" onclick="loadActionsFromSite()">加载站点操作</button>
         </div>
 
         <h4 style="margin:16px 0 8px;font-size:13px;color:var(--text2)">操作编辑 <span id="actionEditorCount" style="color:var(--accent2)"></span></h4>
@@ -264,7 +264,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
             2. 点击"开始选区"，在右侧画面中拖拽选择包含签到结果文字的区域<br>
             3. 设置识图关键词（支持正则表达式）<br>
             4. 点击"测试识图"验证识别效果<br>
-            5. 保存选区和关键词到指定论坛
+            5. 保存选区和关键词到指定站点
           </p>
         </div>
 
@@ -289,10 +289,10 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
 
         <div style="margin-bottom:8px">
           <select id="visionSaveTarget" style="width:100%;padding:6px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">
-            <option value="">-- 选择保存到论坛 --</option>
+            <option value="">-- 选择保存到站点 --</option>
           </select>
         </div>
-        <button class="btn btn-success btn-sm" onclick="saveVisionToForum()" id="btnSaveVision">保存选区到论坛</button>
+        <button class="btn btn-success btn-sm" onclick="saveVisionToSite()" id="btnSaveVision">保存选区到站点</button>
 
         <div id="visionTestResult" style="margin-top:12px;display:none">
           <h4 style="font-size:13px;color:var(--text2);margin-bottom:8px">识别结果</h4>
@@ -337,7 +337,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
 
     <div class="statusbar">
       <span>画面: <span id="fpsDisplay">0</span> FPS</span>
-      <span>论坛: <span id="forumCountDisplay">0</span></span>
+      <span>站点: <span id="siteCountDisplay">0</span></span>
       <span>URL: <span id="currentUrlDisplay">-</span></span>
     </div>
   </div>
@@ -396,7 +396,7 @@ let ws = null;
 let canvas, ctx;
 let isRecording = false;
 let recordedActions = [];
-let forums = [];
+let sites = [];
 let frameCount = 0;
 let lastFpsTime = Date.now();
 const logs = [];
@@ -408,7 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupTabs();
   setupCanvasEvents();
   connectWebSocket();
-  refreshForums();
+  refreshSites();
   refreshStatus();
   initVision();
   setInterval(refreshStatus, 3000);
@@ -611,43 +611,43 @@ async function refreshStatus() {
       st.textContent = '未运行';
     }
     document.getElementById('currentUrlDisplay').textContent = s.current_url || '-';
-    document.getElementById('forumCountDisplay').textContent = s.forum_count || 0;
+    document.getElementById('siteCountDisplay').textContent = s.site_count || s.forum_count || 0;
     const urlBar = document.getElementById('urlBar');
     if (s.current_url && document.activeElement !== urlBar) urlBar.value = s.current_url;
   } catch(e) {}
 }
 
-// ==================== Forum Management ====================
-async function refreshForums() {
-  forums = await api('/api/forums');
-  renderForums();
+// ==================== Site Management ====================
+async function refreshSites() {
+  sites = await api('/api/sites');
+  renderSites();
   updateSaveTargetSelect();
   updateVisionSaveTargetSelect();
 }
 
-function renderForums() {
-  const container = document.getElementById('forumList');
-  if (forums.length === 0) {
-    container.innerHTML = '<p style="color:var(--text2);font-size:13px;text-align:center;padding:20px">暂无论坛，请添加</p>';
+function renderSites() {
+  const container = document.getElementById('siteList');
+  if (sites.length === 0) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:13px;text-align:center;padding:20px">暂无站点，请添加</p>';
     return;
   }
-  container.innerHTML = forums.map(f => `
-    <div class="forum-item">
-      <div class="fi-header">
-        <span class="fi-name">${esc(f.name)}</span>
-        <span class="fi-badge ${f.enabled ? 'on' : 'off'}">${f.enabled ? '启用' : '禁用'}</span>
+  container.innerHTML = sites.map(f => `
+    <div class="site-item">
+      <div class="si-header">
+        <span class="si-name">${esc(f.name)}</span>
+        <span class="si-badge ${f.enabled ? 'on' : 'off'}">${f.enabled ? '启用' : '禁用'}</span>
       </div>
-      <div class="fi-url">${esc(f.url)}</div>
-      <div class="fi-status">
-        操作: <span class="fi-badge ${f.has_actions ? 'ok' : 'none'}">${f.has_actions ? f.action_count + '步' : '未录制'}</span>
-        ${f.vision_region && f.vision_region.width ? '<span class="fi-badge ok">识图</span>' : ''}
-        ${f.last_checkin ? `&nbsp; 上次: <span class="fi-badge ${f.last_result === '成功' || f.last_result?.startsWith('成功') ? 'ok' : 'fail'}">${esc(f.last_result)}</span> <span style="font-size:11px;color:var(--text2)">${esc(f.last_checkin)}</span>` : ''}
+      <div class="si-url">${esc(f.url)}</div>
+      <div class="si-status">
+        操作: <span class="si-badge ${f.has_actions ? 'ok' : 'none'}">${f.has_actions ? f.action_count + '步' : '未录制'}</span>
+        ${f.vision_region && f.vision_region.width ? '<span class="si-badge ok">识图</span>' : ''}
+        ${f.last_checkin ? `&nbsp; 上次: <span class="si-badge ${f.last_result === '成功' || f.last_result?.startsWith('成功') ? 'ok' : 'fail'}">${esc(f.last_result)}</span> <span style="font-size:11px;color:var(--text2)">${esc(f.last_checkin)}</span>` : ''}
       </div>
-      <div class="fi-actions">
-        <button class="btn btn-primary btn-sm" onclick="goToForum('${esc(f.url)}')">前往</button>
+      <div class="si-actions">
+        <button class="btn btn-primary btn-sm" onclick="goToSite('${esc(f.url)}')">前往</button>
         <button class="btn btn-success btn-sm" onclick="checkinOne('${esc(f.name)}')" ${!f.has_actions ? 'disabled title="请先录制操作"' : ''}>签到</button>
-        <button class="btn btn-ghost btn-sm" onclick="toggleForum('${esc(f.name)}')">${f.enabled ? '禁用' : '启用'}</button>
-        <button class="btn btn-danger btn-sm" onclick="removeForum('${esc(f.name)}')">删除</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleSite('${esc(f.name)}')">${f.enabled ? '禁用' : '启用'}</button>
+        <button class="btn btn-danger btn-sm" onclick="removeSite('${esc(f.name)}')">删除</button>
       </div>
     </div>
   `).join('');
@@ -655,39 +655,39 @@ function renderForums() {
 
 function updateSaveTargetSelect() {
   const sel = document.getElementById('saveTarget');
-  sel.innerHTML = '<option value="">-- 选择保存到论坛 --</option>' +
-    forums.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
+  sel.innerHTML = '<option value="">-- 选择保存到站点 --</option>' +
+    sites.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
 }
 
-async function addForum() {
-  const name = document.getElementById('forumName').value.trim();
-  const url = document.getElementById('forumUrl').value.trim();
-  if (!name || !url) { toast('请填写论坛名称和URL', 'error'); return; }
-  const r = await api('/api/forums', 'POST', { name, url });
+async function addSite() {
+  const name = document.getElementById('siteName').value.trim();
+  const url = document.getElementById('siteUrl').value.trim();
+  if (!name || !url) { toast('请填写站点名称和URL', 'error'); return; }
+  const r = await api('/api/sites', 'POST', { name, url });
   if (r.success) {
-    toast('论坛已添加', 'success');
-    document.getElementById('forumName').value = '';
-    document.getElementById('forumUrl').value = '';
-    refreshForums();
+    toast('站点已添加', 'success');
+    document.getElementById('siteName').value = '';
+    document.getElementById('siteUrl').value = '';
+    refreshSites();
   } else { toast(r.message, 'error'); }
 }
 
-async function removeForum(name) {
-  if (!confirm(`确定删除论坛"${name}"？`)) return;
-  await api(`/api/forums/${encodeURIComponent(name)}`, 'DELETE');
+async function removeSite(name) {
+  if (!confirm(`确定删除站点"${name}"？`)) return;
+  await api(`/api/sites/${encodeURIComponent(name)}`, 'DELETE');
   toast('已删除', 'info');
-  refreshForums();
+  refreshSites();
 }
 
-async function toggleForum(name) {
-  await api(`/api/forums/${encodeURIComponent(name)}/toggle`, 'POST');
-  refreshForums();
+async function toggleSite(name) {
+  await api(`/api/sites/${encodeURIComponent(name)}/toggle`, 'POST');
+  refreshSites();
 }
 
-function goToForum(url) {
+function goToSite(url) {
   document.getElementById('urlBar').value = url;
   sendWS({ action: 'navigate', url });
-  addLog('导航到论坛: ' + url);
+  addLog('导航到站点: ' + url);
 }
 
 // ==================== Recording ====================
@@ -968,12 +968,12 @@ function confirmAddAction() {
   toast('操作已添加', 'success');
 }
 
-// ==================== Load Actions from Forum ====================
-async function loadActionsFromForum() {
+// ==================== Load Actions from Site ====================
+async function loadActionsFromSite() {
   const target = document.getElementById('saveTarget').value;
-  if (!target) { toast('请先选择论坛', 'error'); return; }
+  if (!target) { toast('请先选择站点', 'error'); return; }
   try {
-    const r = await api(`/api/forums/${encodeURIComponent(target)}/actions`);
+    const r = await api(`/api/sites/${encodeURIComponent(target)}/actions`);
     if (r.actions && r.actions.length > 0) {
       recordedActions = r.actions;
       editingActionIndex = -1;
@@ -981,20 +981,20 @@ async function loadActionsFromForum() {
       toast(`已加载 ${r.actions.length} 步操作`, 'success');
       addLog(`从 ${target} 加载了 ${r.actions.length} 步操作`);
     } else {
-      toast('该论坛暂无录制操作', 'info');
+      toast('该站点暂无录制操作', 'info');
     }
   } catch(e) { toast('加载失败', 'error'); }
 }
 
-async function saveRecordToForum() {
+async function saveRecordToSite() {
   const target = document.getElementById('saveTarget').value;
-  if (!target) { toast('请选择目标论坛', 'error'); return; }
+  if (!target) { toast('请选择目标站点', 'error'); return; }
   if (recordedActions.length === 0) { toast('没有可保存的操作', 'error'); return; }
-  const r = await api(`/api/forums/${encodeURIComponent(target)}/actions`, 'POST', { actions: recordedActions });
+  const r = await api(`/api/sites/${encodeURIComponent(target)}/actions`, 'POST', { actions: recordedActions });
   if (r.success) {
     toast(`已保存 ${r.count} 步操作到"${target}"`, 'success');
     addLog(`保存 ${r.count} 步操作到: ${target}`);
-    refreshForums();
+    refreshSites();
   } else { toast('保存失败', 'error'); }
 }
 
@@ -1018,7 +1018,7 @@ async function checkinOne(name) {
       addLog(`${name} 签到失败: ${r.result}`);
     }
   }
-  refreshForums();
+  refreshSites();
 }
 
 async function checkinAll() {
@@ -1035,7 +1035,7 @@ async function checkinAll() {
     toast(`签到完成 成功:${sCount} 失败:${fCount} (${failNames})`, 'error');
   }
   addLog(`全部签到完成: 成功${sCount} 失败${fCount}`);
-  // 显示每个论坛的识图截图
+  // 显示每个站点的识图截图
   const vi = r.vision_images || {};
   for (const [fname, vdata] of Object.entries(vi)) {
     if (vdata.image) {
@@ -1043,7 +1043,7 @@ async function checkinAll() {
       addLogWithImage(`[${fname}] 识图验证 (${matchInfo})`, vdata.image);
     }
   }
-  refreshForums();
+  refreshSites();
 }
 
 // ==================== Helpers ====================
@@ -1285,42 +1285,42 @@ async function testVision() {
   }
 }
 
-async function saveVisionToForum() {
+async function saveVisionToSite() {
   const target = document.getElementById('visionSaveTarget').value;
-  if (!target) { toast('请选择目标论坛', 'error'); return; }
+  if (!target) { toast('请选择目标站点', 'error'); return; }
   if (!visionRegion) { toast('请先设置识图选区', 'error'); return; }
   const keywords = document.getElementById('visionKeywords').value.trim();
 
-  const r = await api(`/api/forums/${encodeURIComponent(target)}/vision`, 'POST', {
+  const r = await api(`/api/sites/${encodeURIComponent(target)}/vision`, 'POST', {
     region: visionRegion,
     keywords: keywords,
   });
   if (r.success) {
     toast(`已保存识图配置到"${target}"`, 'success');
     addLog(`保存识图选区到: ${target}`);
-    refreshForums();
+    refreshSites();
   } else { toast(r.message || '保存失败', 'error'); }
 }
 
-// Update vision save target select when forums change
+// Update vision save target select when sites change
 function updateVisionSaveTargetSelect() {
   const sel = document.getElementById('visionSaveTarget');
-  sel.innerHTML = '<option value="">-- 选择保存到论坛 --</option>' +
-    forums.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
+  sel.innerHTML = '<option value="">-- 选择保存到站点 --</option>' +
+    sites.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
 }
 
-// Load a forum's vision config into the panel
-function loadForumVision(name) {
-  const forum = forums.find(f => f.name === name);
-  if (!forum) return;
-  if (forum.vision_region && forum.vision_region.width) {
-    visionRegion = forum.vision_region;
+// Load a site's vision config into the panel
+function loadSiteVision(name) {
+  const site = sites.find(f => f.name === name);
+  if (!site) return;
+  if (site.vision_region && site.vision_region.width) {
+    visionRegion = site.vision_region;
     document.getElementById('visionRegionText').textContent =
       `(${visionRegion.x}, ${visionRegion.y}) ${visionRegion.width}x${visionRegion.height}`;
     updateVisionOverlay();
   }
-  if (forum.vision_keywords) {
-    document.getElementById('visionKeywords').value = forum.vision_keywords;
+  if (site.vision_keywords) {
+    document.getElementById('visionKeywords').value = site.vision_keywords;
   }
 }
 </script>

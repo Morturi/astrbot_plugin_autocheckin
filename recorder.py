@@ -4,11 +4,13 @@
 - 回放模式：按顺序重放录制的动作序列
 """
 
-import json
-import time
 import asyncio
+import base64
+import json
+import re
+import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 try:
@@ -35,8 +37,8 @@ class Action:
 
 
 @dataclass
-class ForumConfig:
-    """签到配置"""
+class SiteConfig:
+    """站点签到配置"""
     name: str
     url: str
     actions: list = field(default_factory=list)  # List[dict] (Action 的序列化)
@@ -113,34 +115,45 @@ class Recorder:
 
 
 class CheckinManager:
-    """签到管理器 - 管理论坛列表和执行签到"""
+    """签到管理器 - 管理站点列表和执行签到"""
 
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.config_file = self.data_dir / "forums.json"
-        self.forums: list[ForumConfig] = []
-        self._load_forums()
+        self.config_file = self.data_dir / "sites.json"
+        self.legacy_config_file = self.data_dir / "forums.json"
+        self.sites: list[SiteConfig] = []
+        self._load_sites()
 
-    def _load_forums(self):
-        """加载论坛配置"""
+    def _load_sites(self):
+        """加载站点配置，兼容旧版 forums.json"""
+        config_path = None
         if self.config_file.exists():
-            try:
-                with open(self.config_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self.forums = [ForumConfig(**d) for d in data]
-                logger.info(f"已加载 {len(self.forums)} 个论坛配置")
-            except Exception as e:
-                logger.error(f"加载论坛配置失败: {e}")
-                self.forums = []
-        else:
-            self.forums = []
+            config_path = self.config_file
+        elif self.legacy_config_file.exists():
+            config_path = self.legacy_config_file
 
-    def _save_forums(self):
-        """保存论坛配置"""
+        if not config_path:
+            self.sites = []
+            return
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.sites = [SiteConfig(**item) for item in data]
+            logger.info(f"已加载 {len(self.sites)} 个站点配置")
+            if config_path == self.legacy_config_file:
+                logger.info("检测到旧版 forums.json，已自动迁移为 sites.json")
+                self._save_sites()
+        except Exception as e:
+            logger.error(f"加载站点配置失败: {e}")
+            self.sites = []
+
+    def _save_sites(self):
+        """保存站点配置"""
         try:
             data = []
-            for f in self.forums:
+            for f in self.sites:
                 d = {
                     "name": f.name,
                     "url": f.url,
@@ -155,55 +168,55 @@ class CheckinManager:
             with open(self.config_file, "w", encoding="utf-8") as fp:
                 json.dump(data, fp, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.error(f"保存论坛配置失败: {e}")
+            logger.error(f"保存站点配置失败: {e}")
 
-    def add_forum(self, name: str, url: str) -> ForumConfig:
-        """添加论坛"""
-        forum = ForumConfig(name=name, url=url)
-        self.forums.append(forum)
-        self._save_forums()
-        return forum
+    def add_site(self, name: str, url: str) -> SiteConfig:
+        """添加站点"""
+        site = SiteConfig(name=name, url=url)
+        self.sites.append(site)
+        self._save_sites()
+        return site
 
-    def remove_forum(self, name: str) -> bool:
-        """移除论坛"""
-        for i, f in enumerate(self.forums):
+    def remove_site(self, name: str) -> bool:
+        """移除站点"""
+        for i, f in enumerate(self.sites):
             if f.name == name:
-                self.forums.pop(i)
-                self._save_forums()
+                self.sites.pop(i)
+                self._save_sites()
                 return True
         return False
 
-    def get_forum(self, name: str) -> Optional[ForumConfig]:
-        """获取指定论坛"""
-        for f in self.forums:
+    def get_site(self, name: str) -> Optional[SiteConfig]:
+        """获取指定站点"""
+        for f in self.sites:
             if f.name == name:
                 return f
         return None
 
-    def update_forum_actions(self, name: str, actions: list[dict]):
-        """更新论坛的签到操作"""
-        forum = self.get_forum(name)
-        if forum:
-            forum.actions = actions
-            self._save_forums()
+    def update_site_actions(self, name: str, actions: list[dict]):
+        """更新站点的签到操作"""
+        site = self.get_site(name)
+        if site:
+            site.actions = actions
+            self._save_sites()
 
     def update_checkin_result(self, name: str, result: str):
         """更新签到结果"""
-        forum = self.get_forum(name)
-        if forum:
+        site = self.get_site(name)
+        if site:
             from datetime import datetime
-            forum.last_checkin = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            forum.last_result = result
-            self._save_forums()
+            site.last_checkin = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            site.last_result = result
+            self._save_sites()
 
-    def get_enabled_forums(self) -> list[ForumConfig]:
-        """获取所有启用的论坛"""
-        return [f for f in self.forums if f.enabled]
+    def get_enabled_sites(self) -> list[SiteConfig]:
+        """获取所有启用的站点"""
+        return [f for f in self.sites if f.enabled]
 
-    def get_all_forums(self) -> list[dict]:
-        """获取所有论坛的摘要信息"""
+    def get_all_sites(self) -> list[dict]:
+        """获取所有站点的摘要信息"""
         result = []
-        for f in self.forums:
+        for f in self.sites:
             result.append({
                 "name": f.name,
                 "url": f.url,
@@ -217,30 +230,67 @@ class CheckinManager:
             })
         return result
 
-    def toggle_forum(self, name: str) -> bool:
-        """切换论坛启用/禁用状态"""
-        forum = self.get_forum(name)
-        if forum:
-            forum.enabled = not forum.enabled
-            self._save_forums()
+    def toggle_site(self, name: str) -> bool:
+        """切换站点启用/禁用状态"""
+        site = self.get_site(name)
+        if site:
+            site.enabled = not site.enabled
+            self._save_sites()
             return True
         return False
 
+    def update_site_vision(self, name: str, region: dict, keywords: str):
+        """更新站点的识图选区和关键词"""
+        site = self.get_site(name)
+        if site:
+            site.vision_region = region
+            site.vision_keywords = keywords
+            self._save_sites()
+
+    @property
+    def forums(self) -> list[SiteConfig]:
+        """兼容旧代码：返回站点列表"""
+        return self.sites
+
+    def add_forum(self, name: str, url: str) -> SiteConfig:
+        """兼容旧代码：添加站点"""
+        return self.add_site(name, url)
+
+    def remove_forum(self, name: str) -> bool:
+        """兼容旧代码：移除站点"""
+        return self.remove_site(name)
+
+    def get_forum(self, name: str) -> Optional[SiteConfig]:
+        """兼容旧代码：获取站点"""
+        return self.get_site(name)
+
+    def update_forum_actions(self, name: str, actions: list[dict]):
+        """兼容旧代码：更新站点的签到操作"""
+        self.update_site_actions(name, actions)
+
+    def get_enabled_forums(self) -> list[SiteConfig]:
+        """兼容旧代码：获取所有启用的站点"""
+        return self.get_enabled_sites()
+
+    def get_all_forums(self) -> list[dict]:
+        """兼容旧代码：获取所有站点的摘要信息"""
+        return self.get_all_sites()
+
+    def toggle_forum(self, name: str) -> bool:
+        """兼容旧代码：切换站点启用/禁用状态"""
+        return self.toggle_site(name)
+
     def update_forum_vision(self, name: str, region: dict, keywords: str):
-        """更新论坛的识图选区和关键词"""
-        forum = self.get_forum(name)
-        if forum:
-            forum.vision_region = region
-            forum.vision_keywords = keywords
-            self._save_forums()
+        """兼容旧代码：更新站点的识图选区和关键词"""
+        self.update_site_vision(name, region, keywords)
 
 
-async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1000,
+async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 1000,
                       context=None, vision_model_id: str = "",
                       use_vision_check: bool = False,
                       checkin_wait: int = 5) -> str:
     """
-    执行单个论坛的签到操作
+    执行单个站点的签到操作
 
     Returns:
         str: "success" 或 "already_checked_in" 或 错误描述
@@ -249,42 +299,42 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
     if not page or page.is_closed():
         return "浏览器未启动"
 
-    if not forum.actions:
+    if not site.actions:
         return "未录制签到操作"
 
     try:
-        # 导航到论坛
-        logger.info(f"正在签到: {forum.name} ({forum.url})")
+        # 导航到站点
+        logger.info(f"正在签到: {site.name} ({site.url})")
         try:
-            await page.goto(forum.url, wait_until="domcontentloaded",
+            await page.goto(site.url, wait_until="domcontentloaded",
                             timeout=browser_manager.page_load_timeout)
         except Exception as e:
             return f"页面加载失败: {str(e)[:50]}"
 
         # 等待页面完全加载
         if checkin_wait > 0:
-            logger.info(f"[{forum.name}] 等待页面加载 {checkin_wait} 秒...")
+            logger.info(f"[{site.name}] 等待页面加载 {checkin_wait} 秒...")
             await asyncio.sleep(checkin_wait)
 
         # 签到前识图预检：如果已签到则跳过操作
         if (use_vision_check and context and
-                forum.vision_region and forum.vision_keywords):
+                site.vision_region and site.vision_keywords):
             try:
-                logger.info(f"[{forum.name}] 执行签到前识图预检...")
+                logger.info(f"[{site.name}] 执行签到前识图预检...")
                 pre_result = await vision_check(
-                    browser_manager, forum, context, vision_model_id)
+                    browser_manager, site, context, vision_model_id)
                 if pre_result["success"]:
                     logger.info(
-                        f"[{forum.name}] 识图预检发现已签到: {pre_result['matched']}，跳过操作")
+                        f"[{site.name}] 识图预检发现已签到: {pre_result['matched']}，跳过操作")
                     return "already_checked_in"
                 else:
                     reason = pre_result.get("error") or "关键词未匹配"
-                    logger.info(f"[{forum.name}] 识图预检未检测到已签到 ({reason})，继续执行签到")
+                    logger.info(f"[{site.name}] 识图预检未检测到已签到 ({reason})，继续执行签到")
             except Exception as e:
-                logger.warning(f"[{forum.name}] 识图预检出错，跳过预检继续签到: {e}")
+                logger.warning(f"[{site.name}] 识图预检出错，跳过预检继续签到: {e}")
 
         # 按顺序执行录制的操作
-        for i, action_dict in enumerate(forum.actions):
+        for i, action_dict in enumerate(site.actions):
             action_type = action_dict.get("type", "")
             delay = action_dict.get("delay", action_delay / 1000)
             # 使用录制的延迟或配置的最小延迟
@@ -348,16 +398,16 @@ async def run_checkin(browser_manager, forum: ForumConfig, action_delay: int = 1
                     await asyncio.sleep(extra_wait)
 
             except Exception as e:
-                logger.warning(f"执行操作 {i+1}/{len(forum.actions)} ({action_type}) 失败: {e}")
+                logger.warning(f"执行操作 {i+1}/{len(site.actions)} ({action_type}) 失败: {e}")
                 # 继续执行后续操作，不中断
 
         await asyncio.sleep(2)  # 等待最后的操作生效
-        logger.info(f"签到完成: {forum.name}")
+        logger.info(f"签到完成: {site.name}")
         return "success"
 
     except Exception as e:
         error_msg = f"签到异常: {str(e)[:100]}"
-        logger.error(f"{forum.name} {error_msg}")
+        logger.error(f"{site.name} {error_msg}")
         return error_msg
 
 
@@ -367,14 +417,14 @@ async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
                            use_vision_check: bool = False,
                            checkin_wait: int = 5) -> dict:
     """
-    执行所有启用论坛的签到
+    执行所有启用站点的签到
 
     Returns:
         dict: {"success": [...], "failed": [{"name": ..., "error": ...}]}
     """
-    forums = checkin_manager.get_enabled_forums()
-    if not forums:
-        return {"success": [], "failed": [], "message": "没有启用的论坛"}
+    sites = checkin_manager.get_enabled_sites()
+    if not sites:
+        return {"success": [], "failed": [], "message": "没有启用的站点"}
 
     # 确保浏览器已启动
     if not browser_manager.is_running:
@@ -385,22 +435,22 @@ async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
 
     results = {"success": [], "failed": []}
 
-    for forum in forums:
+    for site in sites:
         result = await run_checkin(
-            browser_manager, forum, action_delay,
+            browser_manager, site, action_delay,
             context=context, vision_model_id=vision_model_id,
             use_vision_check=use_vision_check,
             checkin_wait=checkin_wait,
         )
         if result in ("success", "already_checked_in"):
-            results["success"].append(forum.name)
+            results["success"].append(site.name)
             msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
-            checkin_manager.update_checkin_result(forum.name, msg)
+            checkin_manager.update_checkin_result(site.name, msg)
         else:
-            results["failed"].append({"name": forum.name, "error": result})
-            checkin_manager.update_checkin_result(forum.name, f"失败: {result}")
+            results["failed"].append({"name": site.name, "error": result})
+            checkin_manager.update_checkin_result(site.name, f"失败: {result}")
 
-        # 论坛之间间隔一段时间
+        # 站点之间间隔一段时间
         await asyncio.sleep(3)
 
     return results
@@ -410,21 +460,21 @@ import re
 import base64
 
 
-async def vision_check(browser_manager, forum: ForumConfig,
+async def vision_check(browser_manager, site: SiteConfig,
                        context, vision_model_id: str = "") -> dict:
     """
     使用多模态大模型识别签到结果
 
     Args:
         browser_manager: 浏览器管理器
-        forum: 论坛配置（含 vision_region 和 vision_keywords）
+        site: 站点配置（含 vision_region 和 vision_keywords）
         context: AstrBot Context（用于调用 LLM）
         vision_model_id: 模型 ID，留空使用默认模型
 
     Returns:
         dict: {"success": bool, "llm_text": str, "matched": str, "image_b64": str}
     """
-    region = forum.vision_region
+    region = site.vision_region
     if not region or not region.get("width") or not region.get("height"):
         return {"success": False, "llm_text": "", "matched": "", "error": "未设置识图选区", "image_b64": ""}
 
@@ -473,7 +523,7 @@ async def vision_check(browser_manager, forum: ForumConfig,
         llm_text = llm_resp.completion_text or ""
 
         # 关键词/正则匹配
-        keywords = forum.vision_keywords.strip()
+        keywords = site.vision_keywords.strip()
         if not keywords:
             return {"success": True, "llm_text": llm_text, "matched": "",
                     "error": "未设置识图关键词，仅返回识别结果", "image_b64": img_b64}
