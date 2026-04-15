@@ -305,11 +305,14 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
     try:
         # 导航到站点
         logger.info(f"正在签到: {site.name} ({site.url})")
+        browser_manager.touch()
         try:
             await page.goto(site.url, wait_until="domcontentloaded",
                             timeout=browser_manager.page_load_timeout)
         except Exception as e:
             return f"页面加载失败: {str(e)[:50]}"
+        finally:
+            browser_manager.touch()
 
         # 等待页面完全加载
         if checkin_wait > 0:
@@ -321,6 +324,7 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
                 site.vision_region and site.vision_keywords):
             try:
                 logger.info(f"[{site.name}] 执行签到前识图预检...")
+                browser_manager.touch()
                 pre_result = await vision_check(
                     browser_manager, site, context, vision_model_id)
                 if pre_result["success"]:
@@ -332,6 +336,8 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
                     logger.info(f"[{site.name}] 识图预检未检测到已签到 ({reason})，继续执行签到")
             except Exception as e:
                 logger.warning(f"[{site.name}] 识图预检出错，跳过预检继续签到: {e}")
+            finally:
+                browser_manager.touch()
 
         # 按顺序执行录制的操作
         for i, action_dict in enumerate(site.actions):
@@ -341,6 +347,7 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
             wait_time = max(delay, action_delay / 1000)
             await asyncio.sleep(wait_time)
 
+            browser_manager.touch()
             try:
                 if action_type == "click":
                     selector = action_dict.get("selector", "")
@@ -400,8 +407,11 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
             except Exception as e:
                 logger.warning(f"执行操作 {i+1}/{len(site.actions)} ({action_type}) 失败: {e}")
                 # 继续执行后续操作，不中断
+            finally:
+                browser_manager.touch()
 
         await asyncio.sleep(2)  # 等待最后的操作生效
+        browser_manager.touch()
         logger.info(f"签到完成: {site.name}")
         return "success"
 
@@ -409,6 +419,82 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
         error_msg = f"签到异常: {str(e)[:100]}"
         logger.error(f"{site.name} {error_msg}")
         return error_msg
+
+
+async def execute_site_checkin(browser_manager, checkin_manager: CheckinManager,
+                               site: SiteConfig, action_delay: int = 1000,
+                               context=None, vision_model_id: str = "",
+                               use_vision_check: bool = False,
+                               checkin_wait: int = 5) -> dict:
+    """
+    执行单个站点签到，并统一处理签到结果判定。
+
+    Returns:
+        dict: {
+            "success": bool,
+            "result": str,
+            "stored_result": str,
+            "raw_result": str,
+            "vision_image": str,
+            "vision_text": str,
+            "vision_matched": str,
+        }
+    """
+    raw_result = await run_checkin(
+        browser_manager, site, action_delay,
+        context=context, vision_model_id=vision_model_id,
+        use_vision_check=use_vision_check,
+        checkin_wait=checkin_wait,
+    )
+
+    vision_image = ""
+    vision_text = ""
+    vision_matched = ""
+
+    if (use_vision_check and context and
+            site.vision_region and site.vision_keywords):
+        browser_manager.touch()
+        vr = await vision_check(
+            browser_manager, site, context, vision_model_id)
+        vision_image = vr.get("image_b64", "")
+        vision_text = vr.get("llm_text", "")
+        vision_matched = vr.get("matched", "")
+
+        if vr["success"]:
+            if raw_result == "already_checked_in":
+                result = f"已签到，跳过；识图匹配: {vision_matched}"
+                stored_result = f"成功 ({result})"
+            else:
+                result = f"识图验证: {vision_matched}"
+                stored_result = f"成功 ({result})"
+            success = True
+        else:
+            reason = vr.get("error") or "未匹配关键词"
+            result = f"识图验证未匹配: {reason}"
+            stored_result = f"失败: {result}"
+            success = False
+    else:
+        success = raw_result in ("success", "already_checked_in")
+        if raw_result == "already_checked_in":
+            result = "已签到，跳过"
+            stored_result = "成功 (已签到，跳过)"
+        elif raw_result == "success":
+            result = "成功"
+            stored_result = "成功"
+        else:
+            result = raw_result
+            stored_result = f"失败: {raw_result}"
+
+    checkin_manager.update_checkin_result(site.name, stored_result)
+    return {
+        "success": success,
+        "result": result,
+        "stored_result": stored_result,
+        "raw_result": raw_result,
+        "vision_image": vision_image,
+        "vision_text": vision_text,
+        "vision_matched": vision_matched,
+    }
 
 
 async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
@@ -433,22 +519,27 @@ async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
         except Exception as e:
             return {"success": [], "failed": [], "message": f"浏览器启动失败: {e}"}
 
-    results = {"success": [], "failed": []}
+    results = {"success": [], "failed": [], "vision_images": {}}
 
     for site in sites:
-        result = await run_checkin(
-            browser_manager, site, action_delay,
+        outcome = await execute_site_checkin(
+            browser_manager, checkin_manager, site, action_delay,
             context=context, vision_model_id=vision_model_id,
             use_vision_check=use_vision_check,
             checkin_wait=checkin_wait,
         )
-        if result in ("success", "already_checked_in"):
+
+        if outcome["vision_image"]:
+            results["vision_images"][site.name] = {
+                "image": outcome["vision_image"],
+                "text": outcome["vision_text"],
+                "matched": outcome["vision_matched"],
+            }
+
+        if outcome["success"]:
             results["success"].append(site.name)
-            msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
-            checkin_manager.update_checkin_result(site.name, msg)
         else:
-            results["failed"].append({"name": site.name, "error": result})
-            checkin_manager.update_checkin_result(site.name, f"失败: {result}")
+            results["failed"].append({"name": site.name, "error": outcome["result"]})
 
         # 站点之间间隔一段时间
         await asyncio.sleep(3)
@@ -484,12 +575,14 @@ async def vision_check(browser_manager, site: SiteConfig,
 
     try:
         # 截取指定区域的截图
+        browser_manager.touch()
         clip = {
             "x": region["x"], "y": region["y"],
             "width": region["width"], "height": region["height"],
         }
         img_bytes = await page.screenshot(type="jpeg", quality=80, clip=clip, scale="css")
         img_b64 = base64.b64encode(img_bytes).decode()
+        browser_manager.touch()
 
         # 构造多模态消息发送给 LLM
         from astrbot.core.agent.message import UserMessageSegment, TextPart, ImageURLPart

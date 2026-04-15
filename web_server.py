@@ -26,6 +26,7 @@ class WebServer:
 
     def __init__(self, browser_manager, checkin_manager, recorder,
                  port: int = 9010, screenshot_interval: int = 500,
+                 action_delay: int = 1000,
                  astrbot_context=None, use_vision_check: bool = False,
                  vision_model_id: str = "", checkin_wait: int = 5):
         self.browser_manager = browser_manager
@@ -33,6 +34,7 @@ class WebServer:
         self.recorder = recorder
         self.port = port
         self.screenshot_interval = screenshot_interval / 1000.0  # 转秒
+        self.action_delay = action_delay
         self.astrbot_context = astrbot_context
         self.use_vision_check = use_vision_check
         self.vision_model_id = vision_model_id
@@ -160,7 +162,9 @@ class WebServer:
 
             elif action == "dblclick":
                 x, y = msg.get("x", 0), msg.get("y", 0)
+                self.browser_manager.touch()
                 await self.browser_manager.page.mouse.dblclick(x, y)
+                self.browser_manager.touch()
 
             elif action == "drag":
                 # 拖动已通过 mousedown/mousemove/mouseup 实时执行
@@ -334,7 +338,7 @@ class WebServer:
     # 签到 API
     async def _api_checkin_one(self, request: web.Request) -> web.Response:
         """手动签到单个站点"""
-        from .recorder import run_checkin, vision_check as do_vision_check
+        from .recorder import execute_site_checkin
         name = request.match_info["name"]
         site = self.checkin_manager.get_site(name)
         if not site:
@@ -344,126 +348,34 @@ class WebServer:
                 await self.browser_manager.launch()
             except Exception as e:
                 return web.json_response({"success": False, "result": f"浏览器启动失败: {e}"})
-        result = await run_checkin(
-            self.browser_manager, site,
+        outcome = await execute_site_checkin(
+            self.browser_manager, self.checkin_manager, site,
+            action_delay=self.action_delay,
             context=self.astrbot_context,
             vision_model_id=self.vision_model_id,
             use_vision_check=self.use_vision_check,
             checkin_wait=self.checkin_wait,
         )
-        success = result in ("success", "already_checked_in")
-        vision_image = ""
-        vision_text = ""
-
-        # 签到后执行识图验证并返回截图
-        if self.use_vision_check and site.vision_region and site.vision_keywords:
-            vr = await do_vision_check(
-                self.browser_manager, site,
-                self.astrbot_context, self.vision_model_id,
-            )
-            vision_image = vr.get("image_b64", "")
-            vision_text = vr.get("llm_text", "")
-            if vr["success"]:
-                # 后验证确认签到成功 — 无论预检或签到操作返回什么，以此为准
-                success = True
-                self.checkin_manager.update_checkin_result(
-                    name, f"成功 (识图验证: {vr['matched']})")
-            elif result == "already_checked_in":
-                self.checkin_manager.update_checkin_result(name, "成功 (已签到，跳过)")
-            elif result == "success":
-                # 签到操作已执行但后验证未确认
-                reason = vr.get("error") or "未匹配关键词"
-                self.checkin_manager.update_checkin_result(
-                    name, f"成功 (识图验证未确认: {reason})")
-            else:
-                self.checkin_manager.update_checkin_result(name, f"失败: {result}")
-        else:
-            if success:
-                msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
-                self.checkin_manager.update_checkin_result(name, msg)
-            else:
-                self.checkin_manager.update_checkin_result(name, f"失败: {result}")
 
         return web.json_response({
-            "success": success,
-            "result": result,
-            "vision_image": vision_image,
-            "vision_text": vision_text,
+            "success": outcome["success"],
+            "result": outcome["result"],
+            "vision_image": outcome["vision_image"],
+            "vision_text": outcome["vision_text"],
         })
 
     async def _api_checkin_all(self, request: web.Request) -> web.Response:
         """手动签到所有站点"""
-        from .recorder import run_checkin, vision_check as do_vision_check
+        from .recorder import run_all_checkins
 
-        sites = self.checkin_manager.get_enabled_sites()
-        if not sites:
-            return web.json_response({
-                "success": [], "failed": [], "message": "没有启用的站点"
-            })
-
-        if not self.browser_manager.is_running:
-            try:
-                await self.browser_manager.launch()
-            except Exception as e:
-                return web.json_response({
-                    "success": [], "failed": [],
-                    "message": f"浏览器启动失败: {e}"
-                })
-
-        results = {"success": [], "failed": [], "vision_images": {}}
-
-        for site in sites:
-            result = await run_checkin(
-                self.browser_manager, site,
-                context=self.astrbot_context,
-                vision_model_id=self.vision_model_id,
-                use_vision_check=self.use_vision_check,
-                checkin_wait=self.checkin_wait,
-            )
-
-            # 识图验证
-            if self.use_vision_check and site.vision_region and site.vision_keywords:
-                vr = await do_vision_check(
-                    self.browser_manager, site,
-                    self.astrbot_context, self.vision_model_id,
-                )
-                if vr.get("image_b64"):
-                    results["vision_images"][site.name] = {
-                        "image": vr["image_b64"],
-                        "text": vr.get("llm_text", ""),
-                        "matched": vr.get("matched", ""),
-                    }
-                if vr["success"]:
-                    # 后验证确认签到成功 — 无论预检或签到操作返回什么，以此为准
-                    results["success"].append(site.name)
-                    self.checkin_manager.update_checkin_result(
-                        site.name, f"成功 (识图验证: {vr['matched']})")
-                elif result == "already_checked_in":
-                    results["success"].append(site.name)
-                    self.checkin_manager.update_checkin_result(
-                        site.name, "成功 (已签到，跳过)")
-                elif result == "success":
-                    # 签到操作已执行但后验证未确认
-                    results["success"].append(site.name)
-                    reason = vr.get("error") or "未匹配关键词"
-                    self.checkin_manager.update_checkin_result(
-                        site.name, f"成功 (识图验证未确认: {reason})")
-                else:
-                    results["failed"].append({"name": site.name, "error": result})
-                    self.checkin_manager.update_checkin_result(
-                        site.name, f"失败: {result}")
-            else:
-                if result in ("success", "already_checked_in"):
-                    results["success"].append(site.name)
-                    msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
-                    self.checkin_manager.update_checkin_result(site.name, msg)
-                else:
-                    results["failed"].append({"name": site.name, "error": result})
-                    self.checkin_manager.update_checkin_result(
-                        site.name, f"失败: {result}")
-
-            await asyncio.sleep(3)
-
+        results = await run_all_checkins(
+            self.browser_manager, self.checkin_manager,
+            action_delay=self.action_delay,
+            context=self.astrbot_context,
+            vision_model_id=self.vision_model_id,
+            use_vision_check=self.use_vision_check,
+            checkin_wait=self.checkin_wait,
+        )
         return web.json_response(results)
 
     # 识图验证 API

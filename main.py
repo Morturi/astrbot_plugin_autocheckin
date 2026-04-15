@@ -17,7 +17,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 
 from .browser_manager import BrowserManager
-from .recorder import Recorder, CheckinManager, run_all_checkins, run_checkin, vision_check
+from .recorder import Recorder, CheckinManager, run_all_checkins, execute_site_checkin
 
 
 # ==================== Cron 解析 ====================
@@ -158,6 +158,7 @@ class SiteCheckinPlugin(Star):
             recorder=self.recorder,
             port=self.webui_port,
             screenshot_interval=self.screenshot_interval,
+            action_delay=self.action_delay,
             astrbot_context=self.context,
             use_vision_check=self.use_vision_check,
             vision_model_id=self.vision_model_id,
@@ -462,32 +463,6 @@ class SiteCheckinPlugin(Star):
             checkin_wait=self.checkin_wait,
         )
 
-        # 如果启用了识图验证，对执行了操作的站点进行签到后二次验证
-        if self.use_vision_check:
-            verified_success = []
-            for site_name in list(results.get("success", [])):
-                site = self.checkin_manager.get_site(site_name)
-                # 预检已通过的（already_checked_in）无需再验证
-                if (site and site.vision_region and site.vision_keywords
-                        and site.last_result == "成功"):
-                    vr = await vision_check(
-                        self.browser_manager, site,
-                        self.context, self.vision_model_id,
-                    )
-                    if vr["success"]:
-                        verified_success.append(site_name)
-                        self.checkin_manager.update_checkin_result(
-                            site_name, f"成功 (识图验证: {vr['matched']})")
-                    else:
-                        # 签到操作本身已成功，识图验证未确认不翻转为失败
-                        verified_success.append(site_name)
-                        reason = vr.get("error") or "未匹配关键词"
-                        self.checkin_manager.update_checkin_result(
-                            site_name, f"成功 (识图验证未确认: {reason})")
-                else:
-                    verified_success.append(site_name)
-            results["success"] = verified_success
-
         # 构建通知消息
         msg = self._format_checkin_result(results)
         logger.info(f"定时签到完成: {msg}")
@@ -663,50 +638,22 @@ class SiteCheckinPlugin(Star):
                 yield event.plain_result(f"浏览器启动失败: {e}")
                 return
 
-        result = await run_checkin(
-            self.browser_manager, site, self.action_delay,
+        outcome = await execute_site_checkin(
+            self.browser_manager, self.checkin_manager, site, self.action_delay,
             context=self.context, vision_model_id=self.vision_model_id,
             use_vision_check=self.use_vision_check,
             checkin_wait=self.checkin_wait,
         )
-        success = result in ("success", "already_checked_in")
 
-        if self.use_vision_check and site.vision_region and site.vision_keywords:
-            vr = await vision_check(
-                self.browser_manager,
-                site,
-                self.context,
-                self.vision_model_id,
-            )
-            if vr["success"]:
-                success = True
-                self.checkin_manager.update_checkin_result(
-                    site_name, f"成功 (识图验证: {vr['matched']})"
-                )
-                yield event.plain_result(f"{site_name} 签到成功! 识图匹配: {vr['matched']}")
-                return
-            if result == "already_checked_in":
-                self.checkin_manager.update_checkin_result(site_name, "成功 (已签到，跳过)")
+        if outcome["success"]:
+            if outcome["raw_result"] == "already_checked_in":
                 yield event.plain_result(f"{site_name} 今日已签到，已跳过。")
-                return
-            if result == "success":
-                reason = vr.get("error") or "未匹配关键词"
-                self.checkin_manager.update_checkin_result(
-                    site_name, f"成功 (识图验证未确认: {reason})"
-                )
-                yield event.plain_result(f"{site_name} 签到成功，但识图未确认: {reason}")
-                return
-
-        if success:
-            msg = "成功 (已签到，跳过)" if result == "already_checked_in" else "成功"
-            self.checkin_manager.update_checkin_result(site_name, msg)
-            if result == "already_checked_in":
-                yield event.plain_result(f"{site_name} 今日已签到，已跳过。")
+            elif outcome["result"].startswith("识图验证: "):
+                yield event.plain_result(f"{site_name} 签到成功! {outcome['result']}")
             else:
                 yield event.plain_result(f"{site_name} 签到成功!")
         else:
-            self.checkin_manager.update_checkin_result(site_name, f"失败: {result}")
-            yield event.plain_result(f"{site_name} 签到失败: {result}")
+            yield event.plain_result(f"{site_name} 签到失败: {outcome['result']}")
 
     # ==================== 生命周期 ====================
 

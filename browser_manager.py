@@ -216,6 +216,7 @@ class BrowserManager:
         """鼠标移动"""
         if not self.is_running:
             return
+        self.touch()
         try:
             await self._page.mouse.move(x, y)
         except Exception as e:

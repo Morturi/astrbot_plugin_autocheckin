@@ -8,3 +8,5 @@ build/
 *.egg
 .env
 .venv/
+astrbot_plugin_guides/astrbot_plugin_autocheckin_docs/claude-history.md
+astrbot_plugin_guides/astrbot_plugin_autocheckin_docs/handover-summary.md
