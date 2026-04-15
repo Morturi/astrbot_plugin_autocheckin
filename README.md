@@ -190,6 +190,10 @@ python -m camoufox fetch
 - 浏览器截图与识图裁剪统一使用 CSS 像素尺度，避免 DPI 与随机视口带来的偏移问题。
 - 识图结果采用“后验证优先”策略：只要后验证确认成功，即视为本次签到成功。
 
+## TODO
+
+- 执行全部签到时整体任务超过browser_idle_timeout时间，浏览器自动关闭，判断逻辑应修改为检测到有对浏览器操作重新计时browser_idle_timeout
+
 ## 许可证
 
 AGPL-3.0 license
