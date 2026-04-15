@@ -133,6 +133,8 @@ class SiteCheckinPlugin(Star):
 
         # 配置参数
         self.webui_port = int(config.get("webui_port", 9010))
+        self.webui_token = str(config.get("webui_token", "sk-change-me"))
+        self.webui_session_timeout = int(config.get("webui_session_timeout", 30))
         self.cron_rules = parse_cron_rules(str(config.get("cron_rules", "30 8 * * *")))
         self.timezone = self._parse_timezone(str(config.get("timezone", "Asia/Shanghai")))
         self.headless = bool(config.get("headless", True))
@@ -159,6 +161,8 @@ class SiteCheckinPlugin(Star):
             port=self.webui_port,
             screenshot_interval=self.screenshot_interval,
             action_delay=self.action_delay,
+            webui_token=self.webui_token,
+            webui_session_timeout=self.webui_session_timeout,
             astrbot_context=self.context,
             use_vision_check=self.use_vision_check,
             vision_model_id=self.vision_model_id,
@@ -182,6 +186,8 @@ class SiteCheckinPlugin(Star):
         try:
             await self.web_server.start()
             logger.info(f"自动签到 WebUI 已启动: http://0.0.0.0:{self.webui_port}")
+            if self.webui_token == "sk-change-me":
+                logger.warning("WebUI 正在使用默认登录密钥 sk-change-me，建议尽快在插件配置中修改。")
         except Exception as e:
             logger.error(f"WebUI 启动失败: {e}")
 

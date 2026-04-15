@@ -5,6 +5,18 @@
     "default": 9010,
     "hint": "用于访问浏览器可视化控制面板和 VNC 操作界面的端口号"
   },
+  "webui_token": {
+    "description": "WebUI 登录密钥",
+    "type": "string",
+    "default": "sk-change-me",
+    "hint": "访问 WebUI 时需要输入的登录密钥。出于安全考虑，建议首次启用后立即修改默认值"
+  },
+  "webui_session_timeout": {
+    "description": "WebUI 登录超时（分钟）",
+    "type": "int",
+    "default": 30,
+    "hint": "登录 WebUI 后，超过此时间未进行操作则要求重新登录。切换访问 IP 时也会强制重新登录"
+  },
   "cron_rules": {
     "description": "定时签到计划（Cron 表达式）",
     "type": "text",

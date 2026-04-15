@@ -8,6 +8,8 @@ WebUI 服务器 - 提供可视化浏览器控制面板
 import asyncio
 import json
 import os
+import secrets
+import time
 from pathlib import Path
 
 from aiohttp import web
@@ -27,6 +29,8 @@ class WebServer:
     def __init__(self, browser_manager, checkin_manager, recorder,
                  port: int = 9010, screenshot_interval: int = 500,
                  action_delay: int = 1000,
+                 webui_token: str = "sk-change-me",
+                 webui_session_timeout: int = 30,
                  astrbot_context=None, use_vision_check: bool = False,
                  vision_model_id: str = "", checkin_wait: int = 5):
         self.browser_manager = browser_manager
@@ -35,10 +39,14 @@ class WebServer:
         self.port = port
         self.screenshot_interval = screenshot_interval / 1000.0  # 转秒
         self.action_delay = action_delay
+        self.webui_token = webui_token or "sk-change-me"
+        self.webui_session_timeout = max(int(webui_session_timeout), 1) * 60
         self.astrbot_context = astrbot_context
         self.use_vision_check = use_vision_check
         self.vision_model_id = vision_model_id
         self.checkin_wait = checkin_wait
+        self._auth_cookie_name = "autocheckin_webui_session"
+        self._sessions: dict[str, dict] = {}
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._ws_clients: set[web.WebSocketResponse] = set()
@@ -46,7 +54,7 @@ class WebServer:
 
     async def start(self):
         """启动 Web 服务器"""
-        self._app = web.Application()
+        self._app = web.Application(middlewares=[self._auth_middleware])
         self._setup_routes()
 
         self._runner = web.AppRunner(self._app)
@@ -77,6 +85,10 @@ class WebServer:
         app = self._app
         # 页面
         app.router.add_get("/", self._handle_index)
+        # 认证
+        app.router.add_get("/api/auth/status", self._api_auth_status)
+        app.router.add_post("/api/auth/login", self._api_auth_login)
+        app.router.add_post("/api/auth/logout", self._api_auth_logout)
         # WebSocket - 浏览器画面流
         app.router.add_get("/ws", self._handle_websocket)
         # REST API
@@ -119,6 +131,156 @@ class WebServer:
         if html_path.exists():
             return web.FileResponse(html_path)
         return web.Response(text="WebUI template not found", status=404)
+
+    @web.middleware
+    async def _auth_middleware(self, request: web.Request, handler):
+        """为 WebUI API 和 WebSocket 提供 token 登录鉴权"""
+        path = request.path
+        if path == "/" or path.startswith("/api/auth/"):
+            return await handler(request)
+
+        refresh_activity = path != "/api/status"
+        session_id, reason = self._validate_session(
+            request, refresh_activity=refresh_activity)
+        if not session_id:
+            return self._build_unauthorized_response(path, reason)
+
+        request["auth_session_id"] = session_id
+        return await handler(request)
+
+    def _build_unauthorized_response(self, path: str, reason: str):
+        """构造未登录或会话失效响应"""
+        message = self._auth_reason_message(reason)
+        if path == "/ws":
+            return web.Response(status=401, text=message)
+        return web.json_response({
+            "success": False,
+            "message": message,
+            "reason": reason,
+        }, status=401)
+
+    @staticmethod
+    def _auth_reason_message(reason: str) -> str:
+        """将会话失效原因转换为用户可读文案"""
+        if reason == "ip_changed":
+            return "检测到访问 IP 已变化，请重新登录 WebUI。"
+        if reason == "expired":
+            return "登录已超时，请重新输入登录密钥。"
+        return "未登录或登录已失效，请重新输入登录密钥。"
+
+    @staticmethod
+    def _get_client_ip(request: web.Request) -> str:
+        """获取当前请求的客户端 IP"""
+        forwarded = request.headers.get("X-Forwarded-For", "").strip()
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.remote or "unknown"
+
+    def _cleanup_expired_sessions(self):
+        """清理已过期的登录会话"""
+        now = time.time()
+        expired = [
+            session_id
+            for session_id, session in self._sessions.items()
+            if now - session.get("last_active", 0) >= self.webui_session_timeout
+        ]
+        for session_id in expired:
+            self._sessions.pop(session_id, None)
+
+    def _validate_session(self, request: web.Request,
+                          refresh_activity: bool = False) -> tuple[str | None, str]:
+        """校验登录会话，支持 IP 绑定与空闲超时"""
+        self._cleanup_expired_sessions()
+
+        session_id = request.cookies.get(self._auth_cookie_name, "")
+        if not session_id:
+            return None, "unauthorized"
+
+        session = self._sessions.get(session_id)
+        if not session:
+            return None, "unauthorized"
+
+        client_ip = self._get_client_ip(request)
+        if session.get("ip") != client_ip:
+            self._sessions.pop(session_id, None)
+            return None, "ip_changed"
+
+        now = time.time()
+        if now - session.get("last_active", 0) >= self.webui_session_timeout:
+            self._sessions.pop(session_id, None)
+            return None, "expired"
+
+        if refresh_activity:
+            session["last_active"] = now
+
+        return session_id, ""
+
+    def _set_auth_cookie(self, response: web.StreamResponse, session_id: str):
+        """写入 WebUI 登录 cookie"""
+        response.set_cookie(
+            self._auth_cookie_name,
+            session_id,
+            max_age=self.webui_session_timeout,
+            httponly=True,
+            samesite="Lax",
+        )
+
+    def _clear_auth_cookie(self, response: web.StreamResponse):
+        """清除 WebUI 登录 cookie"""
+        response.del_cookie(self._auth_cookie_name)
+
+    async def _api_auth_status(self, request: web.Request) -> web.Response:
+        """查询当前登录状态，不刷新会话活动时间"""
+        _, reason = self._validate_session(request, refresh_activity=False)
+        if reason:
+            return web.json_response({
+                "authenticated": False,
+                "message": self._auth_reason_message(reason),
+                "reason": reason,
+            })
+
+        return web.json_response({
+            "authenticated": True,
+            "message": "已登录",
+            "timeout_seconds": self.webui_session_timeout,
+        })
+
+    async def _api_auth_login(self, request: web.Request) -> web.Response:
+        """通过配置的 token 登录 WebUI"""
+        body = await request.json()
+        token = str(body.get("token", ""))
+        if token != self.webui_token:
+            return web.json_response({
+                "success": False,
+                "message": "登录密钥错误",
+            }, status=403)
+
+        session_id = secrets.token_urlsafe(24)
+        self._sessions[session_id] = {
+            "ip": self._get_client_ip(request),
+            "last_active": time.time(),
+        }
+
+        response = web.json_response({
+            "success": True,
+            "message": "登录成功",
+            "timeout_seconds": self.webui_session_timeout,
+        })
+        self._set_auth_cookie(response, session_id)
+        return response
+
+    async def _api_auth_logout(self, request: web.Request) -> web.Response:
+        """退出当前 WebUI 登录"""
+        session_id = request.cookies.get(self._auth_cookie_name, "")
+        if session_id:
+            self._sessions.pop(session_id, None)
+
+        response = web.json_response({
+            "success": True,
+            "message": "已退出登录",
+        })
+        self._clear_auth_cookie(response)
+        return response
 
     # ==================== WebSocket ====================
 

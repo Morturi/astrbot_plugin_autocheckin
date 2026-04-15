@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -190,9 +190,54 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
   margin-top: 4px; transition: all 0.2s;
 }
 .action-add-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+
+/* Auth */
+.auth-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  display: none; align-items: center; justify-content: center;
+  background:
+    radial-gradient(circle at top right, rgba(14,165,233,0.2), transparent 35%),
+    radial-gradient(circle at bottom left, rgba(233,69,96,0.18), transparent 30%),
+    rgba(6,10,22,0.96);
+  backdrop-filter: blur(8px);
+}
+.auth-overlay.active { display: flex; }
+.auth-card {
+  width: 420px; max-width: calc(100vw - 32px);
+  background: rgba(22,33,62,0.96); border: 1px solid var(--border);
+  border-radius: 18px; padding: 28px; box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+}
+.auth-card h2 { font-size: 24px; margin-bottom: 10px; }
+.auth-card p { color: var(--text2); font-size: 13px; line-height: 1.7; margin-bottom: 14px; }
+.auth-input {
+  width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 14px; outline: none;
+}
+.auth-input:focus { border-color: var(--accent2); }
+.auth-actions { display: flex; gap: 10px; margin-top: 14px; }
+.auth-msg { min-height: 20px; margin-top: 12px; font-size: 12px; color: var(--warning); }
+.auth-hint {
+  margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(14,165,233,0.08); color: var(--text2); font-size: 12px;
+  border: 1px solid rgba(14,165,233,0.15);
+}
 </style>
 </head>
 <body>
+<div class="auth-overlay active" id="authOverlay">
+  <div class="auth-card">
+    <h2>WebUI 登录</h2>
+    <p>请输入插件配置中的登录密钥进入控制面板。切换访问 IP 或长时间无操作后需要重新登录。</p>
+    <input type="password" id="loginToken" class="auth-input" placeholder="请输入 WebUI 登录密钥" autocomplete="current-password">
+    <div class="auth-actions">
+      <button class="btn btn-primary" id="btnLogin">登录</button>
+    </div>
+    <div class="auth-msg" id="loginMessage"></div>
+    <div class="auth-hint">
+      默认登录密钥为 <code>sk-change-me</code>，建议在 AstrBot 插件配置中及时修改。
+    </div>
+  </div>
+</div>
 <div class="app">
   <!-- Sidebar -->
   <div class="sidebar">
@@ -200,6 +245,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
       <h1>自动签到</h1>
       <span class="dot off" id="browserDot"></span>
       <span id="browserStatus" style="font-size:12px;color:var(--text2)">未连接</span>
+      <button class="btn btn-ghost btn-sm" id="btnLogout" onclick="logoutWebui()" style="margin-left:auto;display:none">退出登录</button>
     </div>
 
     <div class="tabs">
@@ -400,6 +446,10 @@ let sites = [];
 let frameCount = 0;
 let lastFpsTime = Date.now();
 const logs = [];
+let isAuthenticated = false;
+let runtimeStarted = false;
+let statusTimer = null;
+let fpsTimer = null;
 
 // ==================== Init ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -407,13 +457,31 @@ document.addEventListener('DOMContentLoaded', () => {
   ctx = canvas.getContext('2d');
   setupTabs();
   setupCanvasEvents();
-  connectWebSocket();
-  refreshSites();
-  refreshStatus();
-  initVision();
-  setInterval(refreshStatus, 3000);
-  setInterval(updateFps, 1000);
+  setupAuthEvents();
+  window.addEventListener('unhandledrejection', (e) => {
+    if (e.reason && e.reason.message === 'AUTH_REQUIRED') {
+      e.preventDefault();
+    }
+  });
+  initAuth();
 });
+
+function setupAuthEvents() {
+  document.getElementById('btnLogin').addEventListener('click', submitLogin);
+  document.getElementById('loginToken').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitLogin();
+    }
+  });
+}
+
+async function initAuth() {
+  const authenticated = await checkAuthStatus();
+  if (authenticated) {
+    onLoginSuccess();
+  }
+}
 
 // ==================== Tabs ====================
 function setupTabs() {
@@ -429,6 +497,7 @@ function setupTabs() {
 
 // ==================== WebSocket ====================
 function connectWebSocket() {
+  if (!isAuthenticated) return;
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}/ws`);
   ws.binaryType = 'blob';
@@ -436,7 +505,14 @@ function connectWebSocket() {
   ws.onopen = () => {
     addLog('WebSocket 已连接');
   };
-  ws.onclose = () => { addLog('WebSocket 断开，3秒后重连...'); setTimeout(connectWebSocket, 3000); };
+  ws.onclose = async () => {
+    if (!isAuthenticated) return;
+    addLog('WebSocket 断开，3秒后重连...');
+    setTimeout(async () => {
+      const authenticated = await checkAuthStatus();
+      if (authenticated && isAuthenticated) connectWebSocket();
+    }, 3000);
+  };
   ws.onerror = () => {};
 
   ws.onmessage = (e) => {
@@ -462,7 +538,7 @@ function connectWebSocket() {
 }
 
 function sendWS(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (isAuthenticated && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data));
   }
 }
@@ -562,10 +638,142 @@ function setupCanvasEvents() {
 
 // ==================== API Calls ====================
 async function api(url, method = 'GET', body = null) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin'
+  };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
-  return res.json();
+  let data = {};
+  try {
+    data = await res.json();
+  } catch(e) {}
+
+  if (res.status === 401) {
+    handleAuthExpired(data.message || '登录已失效，请重新登录');
+    throw new Error('AUTH_REQUIRED');
+  }
+
+  return data;
+}
+
+async function checkAuthStatus() {
+  try {
+    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (data.authenticated) {
+      return true;
+    }
+    if (data.message) {
+      showLoginOverlay(data.message);
+    }
+  } catch(e) {
+    showLoginOverlay('无法连接 WebUI，请稍后重试。');
+  }
+  return false;
+}
+
+function showLoginOverlay(message = '') {
+  isAuthenticated = false;
+  stopRuntime();
+  document.getElementById('authOverlay').classList.add('active');
+  document.getElementById('btnLogout').style.display = 'none';
+  document.getElementById('loginMessage').textContent = message;
+  const input = document.getElementById('loginToken');
+  input.value = '';
+  setTimeout(() => input.focus(), 50);
+}
+
+function hideLoginOverlay() {
+  document.getElementById('authOverlay').classList.remove('active');
+  document.getElementById('loginMessage').textContent = '';
+}
+
+function onLoginSuccess() {
+  isAuthenticated = true;
+  hideLoginOverlay();
+  document.getElementById('btnLogout').style.display = 'inline-flex';
+  startRuntime();
+}
+
+function startRuntime() {
+  if (runtimeStarted) return;
+  runtimeStarted = true;
+  connectWebSocket();
+  refreshSites();
+  refreshStatus();
+  initVision();
+  statusTimer = setInterval(refreshStatus, 3000);
+  fpsTimer = setInterval(updateFps, 1000);
+}
+
+function stopRuntime() {
+  runtimeStarted = false;
+  if (statusTimer) {
+    clearInterval(statusTimer);
+    statusTimer = null;
+  }
+  if (fpsTimer) {
+    clearInterval(fpsTimer);
+    fpsTimer = null;
+  }
+  if (ws) {
+    const currentWs = ws;
+    ws = null;
+    currentWs.close();
+  }
+}
+
+async function submitLogin() {
+  const btn = document.getElementById('btnLogin');
+  const msg = document.getElementById('loginMessage');
+  const token = document.getElementById('loginToken').value.trim();
+  if (!token) {
+    msg.textContent = '请输入登录密钥';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  msg.textContent = '';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ token }),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      toast('登录成功', 'success');
+      onLoginSuccess();
+    } else {
+      msg.textContent = data.message || '登录失败';
+    }
+  } catch(e) {
+    msg.textContent = '登录请求失败，请稍后重试。';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+}
+
+async function logoutWebui() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin'
+    });
+  } catch(e) {}
+  handleAuthExpired('已退出登录');
+}
+
+function handleAuthExpired(message) {
+  toast(message, 'error');
+  showLoginOverlay(message);
 }
 
 async function launchBrowser() {
