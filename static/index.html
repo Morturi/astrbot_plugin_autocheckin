@@ -216,11 +216,6 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
 .auth-input:focus { border-color: var(--accent2); }
 .auth-actions { display: flex; gap: 10px; margin-top: 14px; }
 .auth-msg { min-height: 20px; margin-top: 12px; font-size: 12px; color: var(--warning); }
-.auth-hint {
-  margin-top: 14px; padding: 10px 12px; border-radius: 10px;
-  background: rgba(14,165,233,0.08); color: var(--text2); font-size: 12px;
-  border: 1px solid rgba(14,165,233,0.15);
-}
 </style>
 </head>
 <body>
@@ -233,9 +228,6 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-seri
       <button class="btn btn-primary" id="btnLogin">登录</button>
     </div>
     <div class="auth-msg" id="loginMessage"></div>
-    <div class="auth-hint">
-      默认登录密钥为 <code>sk-change-me</code>，建议在 AstrBot 插件配置中及时修改。
-    </div>
   </div>
 </div>
 <div class="app">
