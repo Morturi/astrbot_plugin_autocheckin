@@ -193,6 +193,7 @@ python -m camoufox fetch
 ## TODO
 
 - 执行全部签到时整体任务超过browser_idle_timeout时间，浏览器自动关闭，判断逻辑应修改为检测到有对浏览器操作重新计时browser_idle_timeout
+- 识图验证开启时如后验证结果未匹配，签到结果应返回失败， 识图验证开启时后验证结果应覆盖签到结果
 
 ## 许可证
 
