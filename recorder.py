@@ -410,7 +410,6 @@ async def run_checkin(browser_manager, site: SiteConfig, action_delay: int = 100
             finally:
                 browser_manager.touch()
 
-        await asyncio.sleep(2)  # 等待最后的操作生效
         browser_manager.touch()
         logger.info(f"签到完成: {site.name}")
         return "success"
@@ -540,9 +539,6 @@ async def run_all_checkins(browser_manager, checkin_manager: CheckinManager,
             results["success"].append(site.name)
         else:
             results["failed"].append({"name": site.name, "error": outcome["result"]})
-
-        # 站点之间间隔一段时间
-        await asyncio.sleep(3)
 
     return results
 
